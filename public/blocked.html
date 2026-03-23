@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Server Busy</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container blocked-page">
+    <div class="shield-icon blocked">&#128721;</div>
+
+    <h1 id="blocked-title">Server Busy</h1>
+    <p id="blocked-copy" class="subtitle">
+      Too many users are currently accessing the protected site.<br />
+      Please wait and try again shortly.
+    </p>
+
+    <div class="info-box warning">
+      <h3>&#9888;&#65039; Why am I seeing this?</h3>
+      <p>
+        The Security Gateway limits the number of concurrent users to prevent
+        server overload, denial‑of‑service attacks, and resource exhaustion.
+        This is similar to how services like Cloudflare use "waiting rooms."
+      </p>
+    </div>
+
+    <p class="subtitle">Auto‑retrying in <strong><span id="retry-timer">10</span></strong> seconds...</p>
+
+    <a href="index.html" class="btn btn-primary">
+      &#128260; Try Again Now
+    </a>
+  </div>
+
+  <script>
+    const reason = new URLSearchParams(window.location.search).get("reason");
+    const blockedTitle = document.getElementById("blocked-title");
+    const blockedCopy = document.getElementById("blocked-copy");
+    const retryTimer = document.getElementById("retry-timer");
+    let seconds = 10;
+
+    if (reason === "surge-throttled") {
+      blockedTitle.textContent = "Traffic Spike Detected";
+      blockedCopy.innerHTML =
+        "The gateway detected an unusual jump in entries per second.<br />New entries are being slowed temporarily while protected traffic continues.";
+    }
+
+    const interval = setInterval(() => {
+      seconds--;
+      retryTimer.textContent = seconds;
+      if (seconds <= 0) {
+        clearInterval(interval);
+        window.location.href = "index.html";
+      }
+    }, 1000);
+  </script>
+</body>
+</html>

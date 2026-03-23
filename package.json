@@ -1,0 +1,13 @@
+{
+  "name": "cyber-project",
+  "version": "1.0.0",
+  "description": "Website Rate Limiting Security Gateway - A beginner-friendly cybersecurity mini-project",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "demo": "node ddos-test.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}

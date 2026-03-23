@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Protected Website</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container protected-page">
+    <div class="shield-icon granted">&#9989;</div>
+
+    <h1>Welcome to the Protected Website</h1>
+    <p class="subtitle">
+      You have been verified by the Security Gateway.<br />
+      Your session will expire automatically after 60 seconds.
+    </p>
+
+    <div class="content-box">
+      <h2>&#128272; Confidential Dashboard</h2>
+      <p>
+        This area represents a protected resource — imagine it's a banking
+        portal, admin panel, or any high‑value service that needs to limit
+        concurrent access to prevent overload or abuse.
+      </p>
+      <ul>
+        <li>Your session token is stored temporarily.</li>
+        <li>When you leave, the slot is freed for others.</li>
+        <li>If you do nothing, the slot expires in 60 seconds.</li>
+      </ul>
+    </div>
+
+    <div class="session-info">
+      <p><strong>Session Token:</strong> <span id="token-display">—</span></p>
+      <p><strong>Time Remaining:</strong> <span id="countdown">60</span>s</p>
+    </div>
+
+    <button id="leave-btn" class="btn btn-danger">
+      &#128682; Leave &amp; Free My Slot
+    </button>
+  </div>
+
+  <script>
+    const token = sessionStorage.getItem("gateway-token");
+    const tokenDisplay = document.getElementById("token-display");
+    const countdownEl = document.getElementById("countdown");
+    const leaveBtn = document.getElementById("leave-btn");
+
+
+    if (!token) {
+      document.querySelector(".container").innerHTML = `
+        <div class="shield-icon">&#128683;</div>
+        <h1>Access Denied</h1>
+        <p class="subtitle">You must go through the Security Gateway first.</p>
+        <a href="index.html" class="btn btn-primary">Go to Gateway</a>
+      `;
+    } else {
+      tokenDisplay.textContent = token.slice(0, 16) + "...";
+
+      let seconds = 60;
+      const interval = setInterval(() => {
+        seconds--;
+        countdownEl.textContent = seconds;
+        if (seconds <= 0) {
+          clearInterval(interval);
+          sessionStorage.removeItem("gateway-token");
+          window.location.href = "index.html";
+        }
+      }, 1000);
+
+      leaveBtn.addEventListener("click", async () => {
+        leaveBtn.disabled = true;
+        clearInterval(interval);
+
+        try {
+          await fetch("/api/leave", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token }),
+          });
+        } catch {
+        }
+
+        sessionStorage.removeItem("gateway-token");
+        window.location.href = "index.html";
+      });
+    }
+  </script>
+</body>
+</html>

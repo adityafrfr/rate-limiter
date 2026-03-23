@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="admin-body">
+  <main class="admin-shell">
+    <section class="hero-card">
+      <p class="eyebrow">Demo operations console</p>
+      <div class="hero-heading">
+        <div>
+          <h1>Live Traffic Dashboard</h1>
+          <p class="subtitle">
+            Real-time monitoring for the waiting room, session cap, and bounded
+            local simulator pool.
+          </p>
+        </div>
+        <a href="index.html" class="btn btn-secondary">Back to Visitor View</a>
+      </div>
+
+      <div class="control-row">
+        <label class="duration-field">
+          <span>Run time (seconds)</span>
+          <input id="duration-seconds" type="number" min="10" max="180" value="30" />
+        </label>
+        <button id="start-demo" class="btn btn-primary">Start Demo</button>
+        <button id="stop-demo" class="btn btn-danger">Stop Demo</button>
+      </div>
+
+      <p id="control-status" class="muted-copy">
+        The simulator is local-only and capped at 150% of site capacity.
+      </p>
+    </section>
+
+    <section class="dashboard-grid">
+      <article class="metric-card">
+        <span class="metric-label">Capacity</span>
+        <strong id="metric-capacity">0 / 0</strong>
+        <p>Active sessions occupying the protected site.</p>
+      </article>
+
+      <article class="metric-card">
+        <span class="metric-label">Block rate</span>
+        <strong id="metric-block-rate">0%</strong>
+        <p>Share of access checks rejected by the cap.</p>
+      </article>
+
+      <article class="metric-card">
+        <span class="metric-label">Simulator pool</span>
+        <strong id="metric-pool">0 / 0</strong>
+        <p>Busy agents from the fixed demo pool.</p>
+      </article>
+
+      <article class="metric-card">
+        <span class="metric-label">Entry gate</span>
+        <strong id="metric-parallel">0</strong>
+        <p>Allowed new entries per second during surge mode.</p>
+      </article>
+
+      <article class="chart-card chart-card-wide">
+        <div class="panel-heading">
+          <h2>Pressure Over Time</h2>
+          <div class="chart-legend">
+            <span><i class="legend-dot legend-dot-active"></i> Active slots</span>
+            <span><i class="legend-dot legend-dot-pool"></i> Busy pool agents</span>
+          </div>
+        </div>
+        <svg id="traffic-chart" viewBox="0 0 600 220" preserveAspectRatio="none">
+          <polyline id="chart-active-line" class="chart-line chart-line-active"></polyline>
+          <polyline id="chart-pool-line" class="chart-line chart-line-pool"></polyline>
+        </svg>
+      </article>
+
+      <article class="panel-card">
+        <div class="panel-heading">
+          <h2>Rate Guard</h2>
+          <span id="capacity-caption" class="pill">Idle</span>
+        </div>
+        <div class="meter">
+          <div id="capacity-fill" class="meter-fill meter-fill-active"></div>
+        </div>
+        <p id="capacity-text" class="muted-copy">Waiting for live data.</p>
+      </article>
+
+      <article class="panel-card">
+        <div class="panel-heading">
+          <h2>Pool Recycling</h2>
+          <span id="pool-caption" class="pill">Idle</span>
+        </div>
+        <div class="meter">
+          <div id="pool-fill" class="meter-fill meter-fill-pool"></div>
+        </div>
+        <p id="pool-text" class="muted-copy">Waiting for live data.</p>
+      </article>
+
+      <article class="panel-card">
+        <h2>Simulator States</h2>
+        <div id="state-grid" class="state-grid"></div>
+      </article>
+
+      <article class="panel-card panel-card-wide">
+        <div class="panel-heading">
+          <h2>Recent Decisions</h2>
+          <span class="pill">Live stream</span>
+        </div>
+        <div id="event-feed" class="event-feed"></div>
+      </article>
+
+      <article class="panel-card panel-card-wide">
+        <div class="panel-heading">
+          <h2>Active Sessions</h2>
+          <span id="session-caption" class="pill">0 sessions</span>
+        </div>
+        <div class="table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Label</th>
+                <th>Source</th>
+                <th>IP</th>
+                <th>Age</th>
+                <th>TTL</th>
+              </tr>
+            </thead>
+            <tbody id="sessions-body"></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <script src="admin.js"></script>
+</body>
+</html>

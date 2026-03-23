@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Security Gateway</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container gateway-page">
+    <p class="eyebrow">Local waiting room demo</p>
+    <div class="shield-icon">&#128737;</div>
+
+    <h1>Security Gateway</h1>
+    <p class="subtitle">
+      This demo mimics a Cloudflare-style waiting room. The site has a hard
+      cap on active sessions, a rolling anomaly detector for sudden entry-rate
+      spikes, and a bounded local simulator instead of unrestricted traffic.
+    </p>
+
+    <div class="hero-actions">
+      <button id="enter-btn" class="btn btn-primary">
+        &#9889; Request Access
+      </button>
+      <a href="admin.html" class="btn btn-secondary">Open Admin Console</a>
+    </div>
+
+    <p id="status-msg" class="status-msg"></p>
+
+    <div class="info-box">
+      <h3>How this demo works</h3>
+      <ol>
+        <li>The visitor asks for a slot.</li>
+        <li>The server checks the active-session cap.</li>
+        <li>If space is available, access is granted for 60 seconds.</li>
+        <li>If capacity is full, the visitor sees the waiting page.</li>
+        <li>The admin console can start a bounded local traffic simulation.</li>
+      </ol>
+    </div>
+
+    <div class="summary-grid">
+      <div class="stat-tile">
+        <span class="stat-label">Active slots</span>
+        <strong id="summary-active">0 / 0</strong>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-label">Block rate</span>
+        <strong id="summary-block-rate">0%</strong>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-label">Simulator pool</span>
+        <strong id="summary-pool">0 / 0</strong>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-label">Mode</span>
+        <strong id="summary-mode">Idle</strong>
+      </div>
+    </div>
+
+    <div class="admin-panel">
+      <div class="panel-heading">
+        <h3>&#128200; Live Snapshot</h3>
+        <a href="admin.html" class="dashboard-link">Open full dashboard</a>
+      </div>
+      <div id="admin-stats">Loading...</div>
+    </div>
+  </div>
+
+  <script src="gateway.js"></script>
+</body>
+</html>

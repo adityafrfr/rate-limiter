@@ -1,0 +1,3206 @@
+ddos-test.js
+ddos-test.js
+const SERVER = process.env.SERVER || "http://localhost:3000";
+const POLL_INTERVAL_MS = 1_000;
+const DURATION_SECONDS = Math.max(
+  10,
+  Math.min(180, Number(process.env.DEMO_DURATION_SECONDS) || 30)
+);
+const DASHBOARD_URL = new URL("/admin.html", SERVER).href;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function request(path, options = {}) {
+  const response = await fetch(`${SERVER}${path}`, options);
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || `Request failed with ${response.status}`);
+  }
+
+  return data;
+}
+
+function printSnapshot(snapshot) {
+  const observedRate = Math.max(
+    snapshot.traffic.liveRate,
+    snapshot.traffic.lastSecondRate
+  );
+
+  process.stdout.write("\x1Bc");
+
+  console.log("==============================================");
+  console.log(" Bounded Traffic Pressure Demo");
+  console.log("==============================================");
+  console.log(` Target              : ${SERVER}`);
+  console.log(` Duration            : ${DURATION_SECONDS}s`);
+  console.log(` Site capacity       : ${snapshot.maxUsers} active sessions`);
+  console.log(
+    ` Simulator pool      : ${snapshot.simulator.poolSize} agents`
+  );
+  console.log(
+    ` Entry gate          : ${snapshot.traffic.allowedPerSecond}/s during surge mode`
+  );
+  console.log("==============================================");
+  console.log();
+
+  console.log(
+    `Active slots         : ${snapshot.activeUsers}/${snapshot.maxUsers}`
+  );
+  console.log(
+    `Busy pool agents     : ${snapshot.simulator.busyAgents}/${snapshot.simulator.poolSize}`
+  );
+  console.log(`Simulator state      : ${snapshot.simulator.running ? "RUNNING" : "IDLE"}`);
+  console.log(
+    `Elapsed              : ${snapshot.simulator.elapsedSeconds}s / ${snapshot.simulator.durationSeconds}s`
+  );
+  console.log(
+    `Traffic guard        : ${snapshot.traffic.surgeMode ? "SURGE" : "NORMAL"}`
+  );
+  console.log(
+    `Rate / threshold     : ${observedRate}/s vs ${snapshot.traffic.thresholdRate}/s`
+  );
+  console.log();
+
+  console.log(`Total checks         : ${snapshot.metrics.totalRequests}`);
+  console.log(`Allowed              : ${snapshot.metrics.allowedRequests}`);
+  console.log(`Blocked              : ${snapshot.metrics.blockedRequests}`);
+  console.log(`Block rate           : ${snapshot.metrics.blockRate}%`);
+  console.log(`Peak occupancy       : ${snapshot.metrics.peakActiveUsers}/${snapshot.maxUsers}`);
+  console.log(`Recycled agents      : ${snapshot.simulator.recycled}`);
+  console.log();
+
+  console.log("Recent events:");
+  if (!snapshot.events.length) {
+    console.log("  - no events yet");
+  } else {
+    for (const event of snapshot.events.slice(0, 6)) {
+      const time = new Date(event.time).toLocaleTimeString();
+      console.log(`  - [${time}] ${event.type}: ${event.message}`);
+    }
+  }
+
+  console.log();
+  console.log(`Open ${DASHBOARD_URL} for the live dashboard.`);
+  console.log("Press Ctrl+C to stop the demo early.");
+}
+
+async function stopSimulator() {
+  try {
+    await request("/api/simulator/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+  } catch (_error) {
+  }
+}
+
+async function main() {
+  await request("/api/simulator/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ durationSeconds: DURATION_SECONDS }),
+  });
+
+  while (true) {
+    const snapshot = await request("/api/status");
+    printSnapshot(snapshot);
+
+    if (!snapshot.simulator.running && snapshot.simulator.elapsedSeconds > 0) {
+      break;
+    }
+
+    await sleep(POLL_INTERVAL_MS);
+  }
+
+  const finalSnapshot = await request("/api/status");
+  printSnapshot(finalSnapshot);
+  console.log();
+  console.log("Demo finished. The simulator pool has been returned to idle.");
+}
+
+process.on("SIGINT", async () => {
+  await stopSimulator();
+  process.exit(0);
+});
+
+main().catch((error) => {
+  console.error();
+  console.error("Unable to run the bounded demo controller.");
+  console.error(error.message);
+  process.exit(1);
+});
+
+
+
+package-lock.json
+package-lock.json
+{
+  "name": "cyber-project",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "cyber-project",
+      "version": "1.0.0",
+      "dependencies": {
+        "express": "^4.21.0"
+      }
+    },
+    "node_modules/accepts": {
+      "version": "1.3.8",
+      "resolved": "https://registry.npmjs.org/accepts/-/accepts-1.3.8.tgz",
+      "integrity": "sha512-PYAthTa2m2VKxuvSD3DPC/Gy+U+sOA1LAuT8mkmRuvw+NACSaeXEQ+NHcVF7rONl6qcaxV3Uuemwawk+7+SJLw==",
+      "license": "MIT",
+      "dependencies": {
+        "mime-types": "~2.1.34",
+        "negotiator": "0.6.3"
+      },
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/array-flatten": {
+      "version": "1.1.1",
+      "resolved": "https://registry.npmjs.org/array-flatten/-/array-flatten-1.1.1.tgz",
+      "integrity": "sha512-PCVAQswWemu6UdxsDFFX/+gVeYqKAod3D3UVm91jHwynguOwAvYPhx8nNlM++NqRcK6CxxpUafjmhIdKiHibqg==",
+      "license": "MIT"
+    },
+    "node_modules/body-parser": {
+      "version": "1.20.4",
+      "resolved": "https://registry.npmjs.org/body-parser/-/body-parser-1.20.4.tgz",
+      "integrity": "sha512-ZTgYYLMOXY9qKU/57FAo8F+HA2dGX7bqGc71txDRC1rS4frdFI5R7NhluHxH6M0YItAP0sHB4uqAOcYKxO6uGA==",
+      "license": "MIT",
+      "dependencies": {
+        "bytes": "~3.1.2",
+        "content-type": "~1.0.5",
+        "debug": "2.6.9",
+        "depd": "2.0.0",
+        "destroy": "~1.2.0",
+        "http-errors": "~2.0.1",
+        "iconv-lite": "~0.4.24",
+        "on-finished": "~2.4.1",
+        "qs": "~6.14.0",
+        "raw-body": "~2.5.3",
+        "type-is": "~1.6.18",
+        "unpipe": "~1.0.0"
+      },
+      "engines": {
+        "node": ">= 0.8",
+        "npm": "1.2.8000 || >= 1.4.16"
+      }
+    },
+    "node_modules/bytes": {
+      "version": "3.1.2",
+      "resolved": "https://registry.npmjs.org/bytes/-/bytes-3.1.2.tgz",
+      "integrity": "sha512-/Nf7TyzTx6S3yRJObOAV7956r8cr2+Oj8AC5dt8wSP3BQAoeX58NoHyCU8P8zGkNXStjTSi6fzO6F0pBdcYbEg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/call-bind-apply-helpers": {
+      "version": "1.0.2",
+      "resolved": "https://registry.npmjs.org/call-bind-apply-helpers/-/call-bind-apply-helpers-1.0.2.tgz",
+      "integrity": "sha512-Sp1ablJ0ivDkSzjcaJdxEunN5/XvksFJ2sMBFfq6x0ryhQV/2b/KwFe21cMpmHtPOSij8K99/wSfoEuTObmuMQ==",
+      "license": "MIT",
+      "dependencies": {
+        "es-errors": "^1.3.0",
+        "function-bind": "^1.1.2"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/call-bound": {
+      "version": "1.0.4",
+      "resolved": "https://registry.npmjs.org/call-bound/-/call-bound-1.0.4.tgz",
+      "integrity": "sha512-+ys997U96po4Kx/ABpBCqhA9EuxJaQWDQg7295H4hBphv3IZg0boBKuwYpt4YXp6MZ5AmZQnU/tyMTlRpaSejg==",
+      "license": "MIT",
+      "dependencies": {
+        "call-bind-apply-helpers": "^1.0.2",
+        "get-intrinsic": "^1.3.0"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/content-disposition": {
+      "version": "0.5.4",
+      "resolved": "https://registry.npmjs.org/content-disposition/-/content-disposition-0.5.4.tgz",
+      "integrity": "sha512-FveZTNuGw04cxlAiWbzi6zTAL/lhehaWbTtgluJh4/E95DqMwTmha3KZN1aAWA8cFIhHzMZUvLevkw5Rqk+tSQ==",
+      "license": "MIT",
+      "dependencies": {
+        "safe-buffer": "5.2.1"
+      },
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/content-type": {
+      "version": "1.0.5",
+      "resolved": "https://registry.npmjs.org/content-type/-/content-type-1.0.5.tgz",
+      "integrity": "sha512-nTjqfcBFEipKdXCv4YDQWCfmcLZKm81ldF0pAopTvyrFGVbcR6P/VAAd5G7N+0tTr8QqiU0tFadD6FK4NtJwOA==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/cookie": {
+      "version": "0.7.2",
+      "resolved": "https://registry.npmjs.org/cookie/-/cookie-0.7.2.tgz",
+      "integrity": "sha512-yki5XnKuf750l50uGTllt6kKILY4nQ1eNIQatoXEByZ5dWgnKqbnqmTrBE5B4N7lrMJKQ2ytWMiTO2o0v6Ew/w==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/cookie-signature": {
+      "version": "1.0.7",
+      "resolved": "https://registry.npmjs.org/cookie-signature/-/cookie-signature-1.0.7.tgz",
+      "integrity": "sha512-NXdYc3dLr47pBkpUCHtKSwIOQXLVn8dZEuywboCOJY/osA0wFSLlSawr3KN8qXJEyX66FcONTH8EIlVuK0yyFA==",
+      "license": "MIT"
+    },
+    "node_modules/debug": {
+      "version": "2.6.9",
+      "resolved": "https://registry.npmjs.org/debug/-/debug-2.6.9.tgz",
+      "integrity": "sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA==",
+      "license": "MIT",
+      "dependencies": {
+        "ms": "2.0.0"
+      }
+    },
+    "node_modules/depd": {
+      "version": "2.0.0",
+      "resolved": "https://registry.npmjs.org/depd/-/depd-2.0.0.tgz",
+      "integrity": "sha512-g7nH6P6dyDioJogAAGprGpCtVImJhpPk/roCzdb3fIh61/s/nPsfR6onyMwkCAR/OlC3yBC0lESvUoQEAssIrw==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/destroy": {
+      "version": "1.2.0",
+      "resolved": "https://registry.npmjs.org/destroy/-/destroy-1.2.0.tgz",
+      "integrity": "sha512-2sJGJTaXIIaR1w4iJSNoN0hnMY7Gpc/n8D4qSCJw8QqFWXf7cuAgnEHxBpweaVcPevC2l3KpjYCx3NypQQgaJg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.8",
+        "npm": "1.2.8000 || >= 1.4.16"
+      }
+    },
+    "node_modules/dunder-proto": {
+      "version": "1.0.1",
+      "resolved": "https://registry.npmjs.org/dunder-proto/-/dunder-proto-1.0.1.tgz",
+      "integrity": "sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==",
+      "license": "MIT",
+      "dependencies": {
+        "call-bind-apply-helpers": "^1.0.1",
+        "es-errors": "^1.3.0",
+        "gopd": "^1.2.0"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/ee-first": {
+      "version": "1.1.1",
+      "resolved": "https://registry.npmjs.org/ee-first/-/ee-first-1.1.1.tgz",
+      "integrity": "sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==",
+      "license": "MIT"
+    },
+    "node_modules/encodeurl": {
+      "version": "2.0.0",
+      "resolved": "https://registry.npmjs.org/encodeurl/-/encodeurl-2.0.0.tgz",
+      "integrity": "sha512-Q0n9HRi4m6JuGIV1eFlmvJB7ZEVxu93IrMyiMsGC0lrMJMWzRgx6WGquyfQgZVb31vhGgXnfmPNNXmxnOkRBrg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/es-define-property": {
+      "version": "1.0.1",
+      "resolved": "https://registry.npmjs.org/es-define-property/-/es-define-property-1.0.1.tgz",
+      "integrity": "sha512-e3nRfgfUZ4rNGL232gUgX06QNyyez04KdjFrF+LTRoOXmrOgFKDg4BCdsjW8EnT69eqdYGmRpJwiPVYNrCaW3g==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/es-errors": {
+      "version": "1.3.0",
+      "resolved": "https://registry.npmjs.org/es-errors/-/es-errors-1.3.0.tgz",
+      "integrity": "sha512-Zf5H2Kxt2xjTvbJvP2ZWLEICxA6j+hAmMzIlypy4xcBg1vKVnx89Wy0GbS+kf5cwCVFFzdCFh2XSCFNULS6csw==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/es-object-atoms": {
+      "version": "1.1.1",
+      "resolved": "https://registry.npmjs.org/es-object-atoms/-/es-object-atoms-1.1.1.tgz",
+      "integrity": "sha512-FGgH2h8zKNim9ljj7dankFPcICIK9Cp5bm+c2gQSYePhpaG5+esrLODihIorn+Pe6FGJzWhXQotPv73jTaldXA==",
+      "license": "MIT",
+      "dependencies": {
+        "es-errors": "^1.3.0"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/escape-html": {
+      "version": "1.0.3",
+      "resolved": "https://registry.npmjs.org/escape-html/-/escape-html-1.0.3.tgz",
+      "integrity": "sha512-NiSupZ4OeuGwr68lGIeym/ksIZMJodUGOSCZ/FSnTxcrekbvqrgdUxlJOMpijaKZVjAJrWrGs/6Jy8OMuyj9ow==",
+      "license": "MIT"
+    },
+    "node_modules/etag": {
+      "version": "1.8.1",
+      "resolved": "https://registry.npmjs.org/etag/-/etag-1.8.1.tgz",
+      "integrity": "sha512-aIL5Fx7mawVa300al2BnEE4iNvo1qETxLrPI/o05L7z6go7fCw1J6EQmbK4FmJ2AS7kgVF/KEZWufBfdClMcPg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/express": {
+      "version": "4.22.1",
+      "resolved": "https://registry.npmjs.org/express/-/express-4.22.1.tgz",
+      "integrity": "sha512-F2X8g9P1X7uCPZMA3MVf9wcTqlyNp7IhH5qPCI0izhaOIYXaW9L535tGA3qmjRzpH+bZczqq7hVKxTR4NWnu+g==",
+      "license": "MIT",
+      "dependencies": {
+        "accepts": "~1.3.8",
+        "array-flatten": "1.1.1",
+        "body-parser": "~1.20.3",
+        "content-disposition": "~0.5.4",
+        "content-type": "~1.0.4",
+        "cookie": "~0.7.1",
+        "cookie-signature": "~1.0.6",
+        "debug": "2.6.9",
+        "depd": "2.0.0",
+        "encodeurl": "~2.0.0",
+        "escape-html": "~1.0.3",
+        "etag": "~1.8.1",
+        "finalhandler": "~1.3.1",
+        "fresh": "~0.5.2",
+        "http-errors": "~2.0.0",
+        "merge-descriptors": "1.0.3",
+        "methods": "~1.1.2",
+        "on-finished": "~2.4.1",
+        "parseurl": "~1.3.3",
+        "path-to-regexp": "~0.1.12",
+        "proxy-addr": "~2.0.7",
+        "qs": "~6.14.0",
+        "range-parser": "~1.2.1",
+        "safe-buffer": "5.2.1",
+        "send": "~0.19.0",
+        "serve-static": "~1.16.2",
+        "setprototypeof": "1.2.0",
+        "statuses": "~2.0.1",
+        "type-is": "~1.6.18",
+        "utils-merge": "1.0.1",
+        "vary": "~1.1.2"
+      },
+      "engines": {
+        "node": ">= 0.10.0"
+      },
+      "funding": {
+        "type": "opencollective",
+        "url": "https://opencollective.com/express"
+      }
+    },
+    "node_modules/finalhandler": {
+      "version": "1.3.2",
+      "resolved": "https://registry.npmjs.org/finalhandler/-/finalhandler-1.3.2.tgz",
+      "integrity": "sha512-aA4RyPcd3badbdABGDuTXCMTtOneUCAYH/gxoYRTZlIJdF0YPWuGqiAsIrhNnnqdXGswYk6dGujem4w80UJFhg==",
+      "license": "MIT",
+      "dependencies": {
+        "debug": "2.6.9",
+        "encodeurl": "~2.0.0",
+        "escape-html": "~1.0.3",
+        "on-finished": "~2.4.1",
+        "parseurl": "~1.3.3",
+        "statuses": "~2.0.2",
+        "unpipe": "~1.0.0"
+      },
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/forwarded": {
+      "version": "0.2.0",
+      "resolved": "https://registry.npmjs.org/forwarded/-/forwarded-0.2.0.tgz",
+      "integrity": "sha512-buRG0fpBtRHSTCOASe6hD258tEubFoRLb4ZNA6NxMVHNw2gOcwHo9wyablzMzOA5z9xA9L1KNjk/Nt6MT9aYow==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/fresh": {
+      "version": "0.5.2",
+      "resolved": "https://registry.npmjs.org/fresh/-/fresh-0.5.2.tgz",
+      "integrity": "sha512-zJ2mQYM18rEFOudeV4GShTGIQ7RbzA7ozbU9I/XBpm7kqgMywgmylMwXHxZJmkVoYkna9d2pVXVXPdYTP9ej8Q==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/function-bind": {
+      "version": "1.1.2",
+      "resolved": "https://registry.npmjs.org/function-bind/-/function-bind-1.1.2.tgz",
+      "integrity": "sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==",
+      "license": "MIT",
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/get-intrinsic": {
+      "version": "1.3.0",
+      "resolved": "https://registry.npmjs.org/get-intrinsic/-/get-intrinsic-1.3.0.tgz",
+      "integrity": "sha512-9fSjSaos/fRIVIp+xSJlE6lfwhES7LNtKaCBIamHsjr2na1BiABJPo0mOjjz8GJDURarmCPGqaiVg5mfjb98CQ==",
+      "license": "MIT",
+      "dependencies": {
+        "call-bind-apply-helpers": "^1.0.2",
+        "es-define-property": "^1.0.1",
+        "es-errors": "^1.3.0",
+        "es-object-atoms": "^1.1.1",
+        "function-bind": "^1.1.2",
+        "get-proto": "^1.0.1",
+        "gopd": "^1.2.0",
+        "has-symbols": "^1.1.0",
+        "hasown": "^2.0.2",
+        "math-intrinsics": "^1.1.0"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/get-proto": {
+      "version": "1.0.1",
+      "resolved": "https://registry.npmjs.org/get-proto/-/get-proto-1.0.1.tgz",
+      "integrity": "sha512-sTSfBjoXBp89JvIKIefqw7U2CCebsc74kiY6awiGogKtoSGbgjYE/G/+l9sF3MWFPNc9IcoOC4ODfKHfxFmp0g==",
+      "license": "MIT",
+      "dependencies": {
+        "dunder-proto": "^1.0.1",
+        "es-object-atoms": "^1.0.0"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/gopd": {
+      "version": "1.2.0",
+      "resolved": "https://registry.npmjs.org/gopd/-/gopd-1.2.0.tgz",
+      "integrity": "sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/has-symbols": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/has-symbols/-/has-symbols-1.1.0.tgz",
+      "integrity": "sha512-1cDNdwJ2Jaohmb3sg4OmKaMBwuC48sYni5HUw2DvsC8LjGTLK9h+eb1X6RyuOHe4hT0ULCW68iomhjUoKUqlPQ==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/hasown": {
+      "version": "2.0.2",
+      "resolved": "https://registry.npmjs.org/hasown/-/hasown-2.0.2.tgz",
+      "integrity": "sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==",
+      "license": "MIT",
+      "dependencies": {
+        "function-bind": "^1.1.2"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/http-errors": {
+      "version": "2.0.1",
+      "resolved": "https://registry.npmjs.org/http-errors/-/http-errors-2.0.1.tgz",
+      "integrity": "sha512-4FbRdAX+bSdmo4AUFuS0WNiPz8NgFt+r8ThgNWmlrjQjt1Q7ZR9+zTlce2859x4KSXrwIsaeTqDoKQmtP8pLmQ==",
+      "license": "MIT",
+      "dependencies": {
+        "depd": "~2.0.0",
+        "inherits": "~2.0.4",
+        "setprototypeof": "~1.2.0",
+        "statuses": "~2.0.2",
+        "toidentifier": "~1.0.1"
+      },
+      "engines": {
+        "node": ">= 0.8"
+      },
+      "funding": {
+        "type": "opencollective",
+        "url": "https://opencollective.com/express"
+      }
+    },
+    "node_modules/iconv-lite": {
+      "version": "0.4.24",
+      "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.4.24.tgz",
+      "integrity": "sha512-v3MXnZAcvnywkTUEZomIActle7RXXeedOR31wwl7VlyoXO4Qi9arvSenNQWne1TcRwhCL1HwLI21bEqdpj8/rA==",
+      "license": "MIT",
+      "dependencies": {
+        "safer-buffer": ">= 2.1.2 < 3"
+      },
+      "engines": {
+        "node": ">=0.10.0"
+      }
+    },
+    "node_modules/inherits": {
+      "version": "2.0.4",
+      "resolved": "https://registry.npmjs.org/inherits/-/inherits-2.0.4.tgz",
+      "integrity": "sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==",
+      "license": "ISC"
+    },
+    "node_modules/ipaddr.js": {
+      "version": "1.9.1",
+      "resolved": "https://registry.npmjs.org/ipaddr.js/-/ipaddr.js-1.9.1.tgz",
+      "integrity": "sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.10"
+      }
+    },
+    "node_modules/math-intrinsics": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/math-intrinsics/-/math-intrinsics-1.1.0.tgz",
+      "integrity": "sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/media-typer": {
+      "version": "0.3.0",
+      "resolved": "https://registry.npmjs.org/media-typer/-/media-typer-0.3.0.tgz",
+      "integrity": "sha512-dq+qelQ9akHpcOl/gUVRTxVIOkAJ1wR3QAvb4RsVjS8oVoFjDGTc679wJYmUmknUF5HwMLOgb5O+a3KxfWapPQ==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/merge-descriptors": {
+      "version": "1.0.3",
+      "resolved": "https://registry.npmjs.org/merge-descriptors/-/merge-descriptors-1.0.3.tgz",
+      "integrity": "sha512-gaNvAS7TZ897/rVaZ0nMtAyxNyi/pdbjbAwUpFQpN70GqnVfOiXpeUUMKRBmzXaSQ8DdTX4/0ms62r2K+hE6mQ==",
+      "license": "MIT",
+      "funding": {
+        "url": "https://github.com/sponsors/sindresorhus"
+      }
+    },
+    "node_modules/methods": {
+      "version": "1.1.2",
+      "resolved": "https://registry.npmjs.org/methods/-/methods-1.1.2.tgz",
+      "integrity": "sha512-iclAHeNqNm68zFtnZ0e+1L2yUIdvzNoauKU4WBA3VvH/vPFieF7qfRlwUZU+DA9P9bPXIS90ulxoUoCH23sV2w==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/mime": {
+      "version": "1.6.0",
+      "resolved": "https://registry.npmjs.org/mime/-/mime-1.6.0.tgz",
+      "integrity": "sha512-x0Vn8spI+wuJ1O6S7gnbaQg8Pxh4NNHb7KSINmEWKiPE4RKOplvijn+NkmYmmRgP68mc70j2EbeTFRsrswaQeg==",
+      "license": "MIT",
+      "bin": {
+        "mime": "cli.js"
+      },
+      "engines": {
+        "node": ">=4"
+      }
+    },
+    "node_modules/mime-db": {
+      "version": "1.52.0",
+      "resolved": "https://registry.npmjs.org/mime-db/-/mime-db-1.52.0.tgz",
+      "integrity": "sha512-sPU4uV7dYlvtWJxwwxHD0PuihVNiE7TyAbQ5SWxDCB9mUYvOgroQOwYQQOKPJ8CIbE+1ETVlOoK1UC2nU3gYvg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/mime-types": {
+      "version": "2.1.35",
+      "resolved": "https://registry.npmjs.org/mime-types/-/mime-types-2.1.35.tgz",
+      "integrity": "sha512-ZDY+bPm5zTTF+YpCrAU9nK0UgICYPT0QtT1NZWFv4s++TNkcgVaT0g6+4R2uI4MjQjzysHB1zxuWL50hzaeXiw==",
+      "license": "MIT",
+      "dependencies": {
+        "mime-db": "1.52.0"
+      },
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/ms": {
+      "version": "2.0.0",
+      "resolved": "https://registry.npmjs.org/ms/-/ms-2.0.0.tgz",
+      "integrity": "sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A==",
+      "license": "MIT"
+    },
+    "node_modules/negotiator": {
+      "version": "0.6.3",
+      "resolved": "https://registry.npmjs.org/negotiator/-/negotiator-0.6.3.tgz",
+      "integrity": "sha512-+EUsqGPLsM+j/zdChZjsnX51g4XrHFOIXwfnCVPGlQk/k5giakcKsuxCObBRu6DSm9opw/O6slWbJdghQM4bBg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/object-inspect": {
+      "version": "1.13.4",
+      "resolved": "https://registry.npmjs.org/object-inspect/-/object-inspect-1.13.4.tgz",
+      "integrity": "sha512-W67iLl4J2EXEGTbfeHCffrjDfitvLANg0UlX3wFUUSTx92KXRFegMHUVgSqE+wvhAbi4WqjGg9czysTV2Epbew==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/on-finished": {
+      "version": "2.4.1",
+      "resolved": "https://registry.npmjs.org/on-finished/-/on-finished-2.4.1.tgz",
+      "integrity": "sha512-oVlzkg3ENAhCk2zdv7IJwd/QUD4z2RxRwpkcGY8psCVcCYZNq4wYnVWALHM+brtuJjePWiYF/ClmuDr8Ch5+kg==",
+      "license": "MIT",
+      "dependencies": {
+        "ee-first": "1.1.1"
+      },
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/parseurl": {
+      "version": "1.3.3",
+      "resolved": "https://registry.npmjs.org/parseurl/-/parseurl-1.3.3.tgz",
+      "integrity": "sha512-CiyeOxFT/JZyN5m0z9PfXw4SCBJ6Sygz1Dpl0wqjlhDEGGBP1GnsUVEL0p63hoG1fcj3fHynXi9NYO4nWOL+qQ==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/path-to-regexp": {
+      "version": "0.1.12",
+      "resolved": "https://registry.npmjs.org/path-to-regexp/-/path-to-regexp-0.1.12.tgz",
+      "integrity": "sha512-RA1GjUVMnvYFxuqovrEqZoxxW5NUZqbwKtYz/Tt7nXerk0LbLblQmrsgdeOxV5SFHf0UDggjS/bSeOZwt1pmEQ==",
+      "license": "MIT"
+    },
+    "node_modules/proxy-addr": {
+      "version": "2.0.7",
+      "resolved": "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.7.tgz",
+      "integrity": "sha512-llQsMLSUDUPT44jdrU/O37qlnifitDP+ZwrmmZcoSKyLKvtZxpyV0n2/bD/N4tBAAZ/gJEdZU7KMraoK1+XYAg==",
+      "license": "MIT",
+      "dependencies": {
+        "forwarded": "0.2.0",
+        "ipaddr.js": "1.9.1"
+      },
+      "engines": {
+        "node": ">= 0.10"
+      }
+    },
+    "node_modules/qs": {
+      "version": "6.14.2",
+      "resolved": "https://registry.npmjs.org/qs/-/qs-6.14.2.tgz",
+      "integrity": "sha512-V/yCWTTF7VJ9hIh18Ugr2zhJMP01MY7c5kh4J870L7imm6/DIzBsNLTXzMwUA3yZ5b/KBqLx8Kp3uRvd7xSe3Q==",
+      "license": "BSD-3-Clause",
+      "dependencies": {
+        "side-channel": "^1.1.0"
+      },
+      "engines": {
+        "node": ">=0.6"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/range-parser": {
+      "version": "1.2.1",
+      "resolved": "https://registry.npmjs.org/range-parser/-/range-parser-1.2.1.tgz",
+      "integrity": "sha512-Hrgsx+orqoygnmhFbKaHE6c296J+HTAQXoxEF6gNupROmmGJRoyzfG3ccAveqCBrwr/2yxQ5BVd/GTl5agOwSg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/raw-body": {
+      "version": "2.5.3",
+      "resolved": "https://registry.npmjs.org/raw-body/-/raw-body-2.5.3.tgz",
+      "integrity": "sha512-s4VSOf6yN0rvbRZGxs8Om5CWj6seneMwK3oDb4lWDH0UPhWcxwOWw5+qk24bxq87szX1ydrwylIOp2uG1ojUpA==",
+      "license": "MIT",
+      "dependencies": {
+        "bytes": "~3.1.2",
+        "http-errors": "~2.0.1",
+        "iconv-lite": "~0.4.24",
+        "unpipe": "~1.0.0"
+      },
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/safe-buffer": {
+      "version": "5.2.1",
+      "resolved": "https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.2.1.tgz",
+      "integrity": "sha512-rp3So07KcdmmKbGvgaNxQSJr7bGVSVk5S9Eq1F+ppbRo70+YeaDxkw5Dd8NPN+GD6bjnYm2VuPuCXmpuYvmCXQ==",
+      "funding": [
+        {
+          "type": "github",
+          "url": "https://github.com/sponsors/feross"
+        },
+        {
+          "type": "patreon",
+          "url": "https://www.patreon.com/feross"
+        },
+        {
+          "type": "consulting",
+          "url": "https://feross.org/support"
+        }
+      ],
+      "license": "MIT"
+    },
+    "node_modules/safer-buffer": {
+      "version": "2.1.2",
+      "resolved": "https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz",
+      "integrity": "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==",
+      "license": "MIT"
+    },
+    "node_modules/send": {
+      "version": "0.19.2",
+      "resolved": "https://registry.npmjs.org/send/-/send-0.19.2.tgz",
+      "integrity": "sha512-VMbMxbDeehAxpOtWJXlcUS5E8iXh6QmN+BkRX1GARS3wRaXEEgzCcB10gTQazO42tpNIya8xIyNx8fll1OFPrg==",
+      "license": "MIT",
+      "dependencies": {
+        "debug": "2.6.9",
+        "depd": "2.0.0",
+        "destroy": "1.2.0",
+        "encodeurl": "~2.0.0",
+        "escape-html": "~1.0.3",
+        "etag": "~1.8.1",
+        "fresh": "~0.5.2",
+        "http-errors": "~2.0.1",
+        "mime": "1.6.0",
+        "ms": "2.1.3",
+        "on-finished": "~2.4.1",
+        "range-parser": "~1.2.1",
+        "statuses": "~2.0.2"
+      },
+      "engines": {
+        "node": ">= 0.8.0"
+      }
+    },
+    "node_modules/send/node_modules/ms": {
+      "version": "2.1.3",
+      "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+      "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+      "license": "MIT"
+    },
+    "node_modules/serve-static": {
+      "version": "1.16.3",
+      "resolved": "https://registry.npmjs.org/serve-static/-/serve-static-1.16.3.tgz",
+      "integrity": "sha512-x0RTqQel6g5SY7Lg6ZreMmsOzncHFU7nhnRWkKgWuMTu5NN0DR5oruckMqRvacAN9d5w6ARnRBXl9xhDCgfMeA==",
+      "license": "MIT",
+      "dependencies": {
+        "encodeurl": "~2.0.0",
+        "escape-html": "~1.0.3",
+        "parseurl": "~1.3.3",
+        "send": "~0.19.1"
+      },
+      "engines": {
+        "node": ">= 0.8.0"
+      }
+    },
+    "node_modules/setprototypeof": {
+      "version": "1.2.0",
+      "resolved": "https://registry.npmjs.org/setprototypeof/-/setprototypeof-1.2.0.tgz",
+      "integrity": "sha512-E5LDX7Wrp85Kil5bhZv46j8jOeboKq5JMmYM3gVGdGH8xFpPWXUMsNrlODCrkoxMEeNi/XZIwuRvY4XNwYMJpw==",
+      "license": "ISC"
+    },
+    "node_modules/side-channel": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/side-channel/-/side-channel-1.1.0.tgz",
+      "integrity": "sha512-ZX99e6tRweoUXqR+VBrslhda51Nh5MTQwou5tnUDgbtyM0dBgmhEDtWGP/xbKn6hqfPRHujUNwz5fy/wbbhnpw==",
+      "license": "MIT",
+      "dependencies": {
+        "es-errors": "^1.3.0",
+        "object-inspect": "^1.13.3",
+        "side-channel-list": "^1.0.0",
+        "side-channel-map": "^1.0.1",
+        "side-channel-weakmap": "^1.0.2"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/side-channel-list": {
+      "version": "1.0.0",
+      "resolved": "https://registry.npmjs.org/side-channel-list/-/side-channel-list-1.0.0.tgz",
+      "integrity": "sha512-FCLHtRD/gnpCiCHEiJLOwdmFP+wzCmDEkc9y7NsYxeF4u7Btsn1ZuwgwJGxImImHicJArLP4R0yX4c2KCrMrTA==",
+      "license": "MIT",
+      "dependencies": {
+        "es-errors": "^1.3.0",
+        "object-inspect": "^1.13.3"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/side-channel-map": {
+      "version": "1.0.1",
+      "resolved": "https://registry.npmjs.org/side-channel-map/-/side-channel-map-1.0.1.tgz",
+      "integrity": "sha512-VCjCNfgMsby3tTdo02nbjtM/ewra6jPHmpThenkTYh8pG9ucZ/1P8So4u4FGBek/BjpOVsDCMoLA/iuBKIFXRA==",
+      "license": "MIT",
+      "dependencies": {
+        "call-bound": "^1.0.2",
+        "es-errors": "^1.3.0",
+        "get-intrinsic": "^1.2.5",
+        "object-inspect": "^1.13.3"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/side-channel-weakmap": {
+      "version": "1.0.2",
+      "resolved": "https://registry.npmjs.org/side-channel-weakmap/-/side-channel-weakmap-1.0.2.tgz",
+      "integrity": "sha512-WPS/HvHQTYnHisLo9McqBHOJk2FkHO/tlpvldyrnem4aeQp4hai3gythswg6p01oSoTl58rcpiFAjF2br2Ak2A==",
+      "license": "MIT",
+      "dependencies": {
+        "call-bound": "^1.0.2",
+        "es-errors": "^1.3.0",
+        "get-intrinsic": "^1.2.5",
+        "object-inspect": "^1.13.3",
+        "side-channel-map": "^1.0.1"
+      },
+      "engines": {
+        "node": ">= 0.4"
+      },
+      "funding": {
+        "url": "https://github.com/sponsors/ljharb"
+      }
+    },
+    "node_modules/statuses": {
+      "version": "2.0.2",
+      "resolved": "https://registry.npmjs.org/statuses/-/statuses-2.0.2.tgz",
+      "integrity": "sha512-DvEy55V3DB7uknRo+4iOGT5fP1slR8wQohVdknigZPMpMstaKJQWhwiYBACJE3Ul2pTnATihhBYnRhZQHGBiRw==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/toidentifier": {
+      "version": "1.0.1",
+      "resolved": "https://registry.npmjs.org/toidentifier/-/toidentifier-1.0.1.tgz",
+      "integrity": "sha512-o5sSPKEkg/DIQNmH43V0/uerLrpzVedkUh8tGNvaeXpfpuwjKenlSox/2O/BTlZUtEe+JG7s5YhEz608PlAHRA==",
+      "license": "MIT",
+      "engines": {
+        "node": ">=0.6"
+      }
+    },
+    "node_modules/type-is": {
+      "version": "1.6.18",
+      "resolved": "https://registry.npmjs.org/type-is/-/type-is-1.6.18.tgz",
+      "integrity": "sha512-TkRKr9sUTxEH8MdfuCSP7VizJyzRNMjj2J2do2Jr3Kym598JVdEksuzPQCnlFPW4ky9Q+iA+ma9BGm06XQBy8g==",
+      "license": "MIT",
+      "dependencies": {
+        "media-typer": "0.3.0",
+        "mime-types": "~2.1.24"
+      },
+      "engines": {
+        "node": ">= 0.6"
+      }
+    },
+    "node_modules/unpipe": {
+      "version": "1.0.0",
+      "resolved": "https://registry.npmjs.org/unpipe/-/unpipe-1.0.0.tgz",
+      "integrity": "sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.8"
+      }
+    },
+    "node_modules/utils-merge": {
+      "version": "1.0.1",
+      "resolved": "https://registry.npmjs.org/utils-merge/-/utils-merge-1.0.1.tgz",
+      "integrity": "sha512-pMZTvIkT1d+TFGvDOqodOclx0QWkkgi6Tdoa8gC8ffGAAqz9pzPTZWAybbsHHoED/ztMtkv/VoYTYyShUn81hA==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.4.0"
+      }
+    },
+    "node_modules/vary": {
+      "version": "1.1.2",
+      "resolved": "https://registry.npmjs.org/vary/-/vary-1.1.2.tgz",
+      "integrity": "sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">= 0.8"
+      }
+    }
+  }
+}
+
+
+
+package.json
+package.json
+{
+  "name": "cyber-project",
+  "version": "1.0.0",
+  "description": "Website Rate Limiting Security Gateway - A beginner-friendly cybersecurity mini-project",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "demo": "node ddos-test.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}
+
+
+
+public/admin.html
+admin.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="admin-body">
+  <main class="admin-shell">
+    <section class="hero-card">
+      <p class="eyebrow">Demo operations console</p>
+      <div class="hero-heading">
+        <div>
+          <h1>Live Traffic Dashboard</h1>
+          <p class="subtitle">
+            Real-time monitoring for the waiting room, session cap, and bounded
+            local simulator pool.
+          </p>
+        </div>
+        <a href="index.html" class="btn btn-secondary">Back to Visitor View</a>
+      </div>
+
+      <div class="control-row">
+        <label class="duration-field">
+          <span>Run time (seconds)</span>
+          <input id="duration-seconds" type="number" min="10" max="180" value="30" />
+        </label>
+        <button id="start-demo" class="btn btn-primary">Start Demo</button>
+        <button id="stop-demo" class="btn btn-danger">Stop Demo</button>
+      </div>
+
+      <p id="control-status" class="muted-copy">
+        The simulator is local-only and capped at 150% of site capacity.
+      </p>
+    </section>
+
+    <section class="dashboard-grid">
+      <article class="metric-card">
+        <span class="metric-label">Capacity</span>
+        <strong id="metric-capacity">0 / 0</strong>
+        <p>Active sessions occupying the protected site.</p>
+      </article>
+
+      <article class="metric-card">
+        <span class="metric-label">Block rate</span>
+        <strong id="metric-block-rate">0%</strong>
+        <p>Share of access checks rejected by the cap.</p>
+      </article>
+
+      <article class="metric-card">
+        <span class="metric-label">Simulator pool</span>
+        <strong id="metric-pool">0 / 0</strong>
+        <p>Busy agents from the fixed demo pool.</p>
+      </article>
+
+      <article class="metric-card">
+        <span class="metric-label">Entry gate</span>
+        <strong id="metric-parallel">0</strong>
+        <p>Allowed new entries per second during surge mode.</p>
+      </article>
+
+      <article class="chart-card chart-card-wide">
+        <div class="panel-heading">
+          <h2>Pressure Over Time</h2>
+          <div class="chart-legend">
+            <span><i class="legend-dot legend-dot-active"></i> Active slots</span>
+            <span><i class="legend-dot legend-dot-pool"></i> Busy pool agents</span>
+          </div>
+        </div>
+        <svg id="traffic-chart" viewBox="0 0 600 220" preserveAspectRatio="none">
+          <polyline id="chart-active-line" class="chart-line chart-line-active"></polyline>
+          <polyline id="chart-pool-line" class="chart-line chart-line-pool"></polyline>
+        </svg>
+      </article>
+
+      <article class="panel-card">
+        <div class="panel-heading">
+          <h2>Rate Guard</h2>
+          <span id="capacity-caption" class="pill">Idle</span>
+        </div>
+        <div class="meter">
+          <div id="capacity-fill" class="meter-fill meter-fill-active"></div>
+        </div>
+        <p id="capacity-text" class="muted-copy">Waiting for live data.</p>
+      </article>
+
+      <article class="panel-card">
+        <div class="panel-heading">
+          <h2>Pool Recycling</h2>
+          <span id="pool-caption" class="pill">Idle</span>
+        </div>
+        <div class="meter">
+          <div id="pool-fill" class="meter-fill meter-fill-pool"></div>
+        </div>
+        <p id="pool-text" class="muted-copy">Waiting for live data.</p>
+      </article>
+
+      <article class="panel-card">
+        <h2>Simulator States</h2>
+        <div id="state-grid" class="state-grid"></div>
+      </article>
+
+      <article class="panel-card panel-card-wide">
+        <div class="panel-heading">
+          <h2>Recent Decisions</h2>
+          <span class="pill">Live stream</span>
+        </div>
+        <div id="event-feed" class="event-feed"></div>
+      </article>
+
+      <article class="panel-card panel-card-wide">
+        <div class="panel-heading">
+          <h2>Active Sessions</h2>
+          <span id="session-caption" class="pill">0 sessions</span>
+        </div>
+        <div class="table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Label</th>
+                <th>Source</th>
+                <th>IP</th>
+                <th>Age</th>
+                <th>TTL</th>
+              </tr>
+            </thead>
+            <tbody id="sessions-body"></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <script src="admin.js"></script>
+</body>
+</html>
+
+
+
+public/admin.js
+admin.js
+const durationInput = document.getElementById("duration-seconds");
+const startButton = document.getElementById("start-demo");
+const stopButton = document.getElementById("stop-demo");
+const controlStatus = document.getElementById("control-status");
+
+const metricCapacity = document.getElementById("metric-capacity");
+const metricBlockRate = document.getElementById("metric-block-rate");
+const metricPool = document.getElementById("metric-pool");
+const metricParallel = document.getElementById("metric-parallel");
+
+const capacityCaption = document.getElementById("capacity-caption");
+const capacityFill = document.getElementById("capacity-fill");
+const capacityText = document.getElementById("capacity-text");
+
+const poolCaption = document.getElementById("pool-caption");
+const poolFill = document.getElementById("pool-fill");
+const poolText = document.getElementById("pool-text");
+
+const stateGrid = document.getElementById("state-grid");
+const eventFeed = document.getElementById("event-feed");
+const sessionCaption = document.getElementById("session-caption");
+const sessionsBody = document.getElementById("sessions-body");
+
+const chartActiveLine = document.getElementById("chart-active-line");
+const chartPoolLine = document.getElementById("chart-pool-line");
+
+let eventStream = null;
+
+function setMeter(fillNode, current, total) {
+  const percentage =
+    total === 0 ? 0 : Math.min(100, Math.round((current / total) * 100));
+  fillNode.style.width = `${percentage}%`;
+}
+
+function buildPolyline(values, maxValue) {
+  const width = 600;
+  const height = 220;
+  const safeMax = Math.max(1, maxValue);
+
+  if (!values.length) {
+    return `0,${height - 12} ${width},${height - 12}`;
+  }
+
+  return values
+    .map((value, index) => {
+      const x =
+        values.length === 1 ? width / 2 : (index / (values.length - 1)) * width;
+      const normalized = Math.min(value, safeMax) / safeMax;
+      const y = height - 12 - normalized * (height - 24);
+      return `${x},${y}`;
+    })
+    .join(" ");
+}
+
+function renderStates(states) {
+  const labels = [
+    ["Idle", states.idle],
+    ["Requesting", states.requesting],
+    ["Holding", states.holding],
+    ["Cooldown", states.cooldown],
+  ];
+
+  stateGrid.innerHTML = labels
+    .map(
+      ([label, value]) => `
+        <div class="state-card">
+          <span>${label}</span>
+          <strong>${value}</strong>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function renderEvents(events) {
+  if (!events.length) {
+    eventFeed.innerHTML =
+      '<p class="muted-copy">No decisions have been recorded yet.</p>';
+    return;
+  }
+
+  eventFeed.innerHTML = events
+    .slice(0, 12)
+    .map((event) => {
+      const time = new Date(event.time).toLocaleTimeString();
+      return `
+        <article class="event-item">
+          <div class="event-head">
+            <span class="pill">${event.type}</span>
+            <time>${time}</time>
+          </div>
+          <p>${event.message}</p>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function renderSessions(sessions) {
+  sessionCaption.textContent = `${sessions.length} session${
+    sessions.length === 1 ? "" : "s"
+  }`;
+
+  if (!sessions.length) {
+    sessionsBody.innerHTML =
+      '<tr><td colspan="5" class="table-empty">No active sessions.</td></tr>';
+    return;
+  }
+
+  sessionsBody.innerHTML = sessions
+    .map(
+      (session) => `
+        <tr>
+          <td>${session.label}</td>
+          <td>${session.source}</td>
+          <td>${session.ip}</td>
+          <td>${session.ageSeconds}s</td>
+          <td>${session.expiresInSeconds}s</td>
+        </tr>
+      `
+    )
+    .join("");
+}
+
+function renderChart(snapshot) {
+  const activeSeries = snapshot.history.map((point) => point.activeUsers);
+  const poolSeries = snapshot.history.map((point) => point.simulatorBusy);
+
+  chartActiveLine.setAttribute(
+    "points",
+    buildPolyline(activeSeries, snapshot.maxUsers)
+  );
+  chartPoolLine.setAttribute(
+    "points",
+    buildPolyline(poolSeries, snapshot.simulator.poolSize)
+  );
+}
+
+function renderSnapshot(snapshot) {
+  const observedRate = Math.max(
+    snapshot.traffic.liveRate,
+    snapshot.traffic.lastSecondRate
+  );
+
+  metricCapacity.textContent = `${snapshot.activeUsers} / ${snapshot.maxUsers}`;
+  metricBlockRate.textContent = `${snapshot.metrics.blockRate}%`;
+  metricPool.textContent = `${snapshot.simulator.busyAgents} / ${snapshot.simulator.poolSize}`;
+  metricParallel.textContent = `${snapshot.traffic.allowedPerSecond}/s`;
+
+  capacityCaption.textContent =
+    snapshot.traffic.surgeMode ? "Surge" : "Stable";
+  capacityText.textContent = `Observed rate ${observedRate}/s, baseline ${snapshot.traffic.baselineRate}/s, threshold ${snapshot.traffic.thresholdRate}/s.`;
+  setMeter(
+    capacityFill,
+    observedRate,
+    Math.max(snapshot.traffic.thresholdRate, snapshot.traffic.allowedPerSecond)
+  );
+
+  poolCaption.textContent = snapshot.simulator.running ? "Running" : "Idle";
+  poolText.textContent = `${snapshot.simulator.recycled} agents have completed a recycle loop.`;
+  setMeter(poolFill, snapshot.simulator.busyAgents, snapshot.simulator.poolSize);
+
+  controlStatus.textContent = snapshot.traffic.surgeMode
+    ? `Surge guard active. New entries are limited to ${snapshot.traffic.allowedPerSecond}/s for about ${snapshot.traffic.cooldownSeconds}s.`
+    : snapshot.simulator.running
+      ? `Simulator running for ${snapshot.simulator.elapsedSeconds}s of ${snapshot.simulator.durationSeconds}s.`
+      : "The simulator is local-only and capped at 150% of site capacity.";
+
+  startButton.disabled = snapshot.simulator.running;
+  stopButton.disabled = !snapshot.simulator.running;
+
+  renderStates(snapshot.simulator.states);
+  renderEvents(snapshot.events);
+  renderSessions(snapshot.sessions);
+  renderChart(snapshot);
+}
+
+async function loadSnapshot() {
+  const response = await fetch("/api/status");
+  if (!response.ok) {
+    throw new Error("Unable to load status.");
+  }
+  return response.json();
+}
+
+async function postControl(url, body = {}) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Request failed.");
+  }
+
+  return data.snapshot;
+}
+
+async function startDemo() {
+  const durationSeconds = Math.max(
+    10,
+    Math.min(180, Number(durationInput.value) || 30)
+  );
+
+  controlStatus.textContent = "Starting bounded demo traffic...";
+
+  try {
+    const snapshot = await postControl("/api/simulator/start", {
+      durationSeconds,
+    });
+    renderSnapshot(snapshot);
+  } catch (error) {
+    controlStatus.textContent = error.message;
+  }
+}
+
+async function stopDemo() {
+  controlStatus.textContent = "Stopping simulator...";
+
+  try {
+    const snapshot = await postControl("/api/simulator/stop");
+    renderSnapshot(snapshot);
+  } catch (error) {
+    controlStatus.textContent = error.message;
+  }
+}
+
+function connectStream() {
+  if (eventStream) {
+    eventStream.close();
+  }
+
+  eventStream = new EventSource("/api/dashboard/stream");
+  eventStream.onmessage = (event) => {
+    renderSnapshot(JSON.parse(event.data));
+  };
+  eventStream.onerror = async () => {
+    if (eventStream) {
+      eventStream.close();
+      eventStream = null;
+    }
+
+    try {
+      renderSnapshot(await loadSnapshot());
+    } catch (_error) {
+      controlStatus.textContent = "Dashboard connection lost.";
+    }
+
+    setTimeout(connectStream, 1_500);
+  };
+}
+
+startButton.addEventListener("click", startDemo);
+stopButton.addEventListener("click", stopDemo);
+
+loadSnapshot()
+  .then(renderSnapshot)
+  .catch(() => {
+    controlStatus.textContent = "Unable to load dashboard data.";
+  });
+
+connectStream();
+
+
+
+public/blocked.html
+blocked.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Server Busy</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container blocked-page">
+    <div class="shield-icon blocked">&#128721;</div>
+
+    <h1 id="blocked-title">Server Busy</h1>
+    <p id="blocked-copy" class="subtitle">
+      Too many users are currently accessing the protected site.<br />
+      Please wait and try again shortly.
+    </p>
+
+    <div class="info-box warning">
+      <h3>&#9888;&#65039; Why am I seeing this?</h3>
+      <p>
+        The Security Gateway limits the number of concurrent users to prevent
+        server overload, denial‑of‑service attacks, and resource exhaustion.
+        This is similar to how services like Cloudflare use "waiting rooms."
+      </p>
+    </div>
+
+    <p class="subtitle">Auto‑retrying in <strong><span id="retry-timer">10</span></strong> seconds...</p>
+
+    <a href="index.html" class="btn btn-primary">
+      &#128260; Try Again Now
+    </a>
+  </div>
+
+  <script>
+    const reason = new URLSearchParams(window.location.search).get("reason");
+    const blockedTitle = document.getElementById("blocked-title");
+    const blockedCopy = document.getElementById("blocked-copy");
+    const retryTimer = document.getElementById("retry-timer");
+    let seconds = 10;
+
+    if (reason === "surge-throttled") {
+      blockedTitle.textContent = "Traffic Spike Detected";
+      blockedCopy.innerHTML =
+        "The gateway detected an unusual jump in entries per second.<br />New entries are being slowed temporarily while protected traffic continues.";
+    }
+
+    const interval = setInterval(() => {
+      seconds--;
+      retryTimer.textContent = seconds;
+      if (seconds <= 0) {
+        clearInterval(interval);
+        window.location.href = "index.html";
+      }
+    }, 1000);
+  </script>
+</body>
+</html>
+
+
+
+public/gateway.js
+gateway.js
+const enterBtn = document.getElementById("enter-btn");
+const statusMsg = document.getElementById("status-msg");
+const adminStats = document.getElementById("admin-stats");
+
+const summaryActive = document.getElementById("summary-active");
+const summaryBlockRate = document.getElementById("summary-block-rate");
+const summaryPool = document.getElementById("summary-pool");
+const summaryMode = document.getElementById("summary-mode");
+
+enterBtn.addEventListener("click", async () => {
+  enterBtn.disabled = true;
+  statusMsg.textContent = "Checking availability...";
+  statusMsg.className = "status-msg";
+
+  try {
+    const response = await fetch("/api/request-access", {
+      method: "POST",
+    });
+    const data = await response.json();
+
+    if (data.allowed) {
+      statusMsg.textContent = "Access granted. Redirecting...";
+      statusMsg.classList.add("success");
+      sessionStorage.setItem("gateway-token", data.token);
+      setTimeout(() => {
+        window.location.href = "site.html";
+      }, 700);
+      return;
+    }
+
+    statusMsg.textContent =
+      data.reason === "surge-throttled"
+        ? data.message
+        : "Capacity is full. Redirecting...";
+    statusMsg.classList.add("error");
+    setTimeout(() => {
+      window.location.href = `blocked.html?reason=${encodeURIComponent(
+        data.reason || "capacity-full"
+      )}`;
+    }, 700);
+  } catch (_error) {
+    statusMsg.textContent = "Error connecting to the gateway.";
+    statusMsg.classList.add("error");
+    enterBtn.disabled = false;
+  }
+});
+
+function renderSessionsTable(sessions) {
+  if (!sessions.length) {
+    return '<p class="muted-copy">No active sessions right now.</p>';
+  }
+
+  const rows = sessions
+    .slice(0, 6)
+    .map(
+      (session) => `
+        <tr>
+          <td>${session.label}</td>
+          <td>${session.source}</td>
+          <td>${session.ageSeconds}s</td>
+          <td>${session.expiresInSeconds}s</td>
+        </tr>
+      `
+    )
+    .join("");
+
+  return `
+    <div class="compact-metrics">
+      <p><strong>Total attempts:</strong> ${window.gatewaySnapshot.metrics.totalRequests}</p>
+      <p><strong>Allowed:</strong> ${window.gatewaySnapshot.metrics.allowedRequests}</p>
+      <p><strong>Blocked:</strong> ${window.gatewaySnapshot.metrics.blockedRequests}</p>
+      <p><strong>Peak occupancy:</strong> ${window.gatewaySnapshot.metrics.peakActiveUsers}/${window.gatewaySnapshot.maxUsers}</p>
+    </div>
+    <table class="admin-table">
+      <thead>
+        <tr>
+          <th>Session</th>
+          <th>Source</th>
+          <th>Age</th>
+          <th>TTL</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+async function refreshStatus() {
+  try {
+    const response = await fetch("/api/status");
+    const data = await response.json();
+    window.gatewaySnapshot = data;
+
+    summaryActive.textContent = `${data.activeUsers} / ${data.maxUsers}`;
+    summaryBlockRate.textContent = `${data.metrics.blockRate}%`;
+    summaryPool.textContent = `${data.simulator.busyAgents} / ${data.simulator.poolSize}`;
+    summaryMode.textContent = data.traffic.surgeMode
+      ? "Surge guard"
+      : data.simulator.running
+        ? "Sim running"
+        : "Normal";
+
+    adminStats.innerHTML = renderSessionsTable(data.sessions);
+  } catch (_error) {
+    adminStats.innerHTML =
+      '<p class="muted-copy">Unable to fetch live status.</p>';
+  }
+}
+
+refreshStatus();
+setInterval(refreshStatus, 2_000);
+
+
+
+public/index.html
+index.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Security Gateway</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container gateway-page">
+    <p class="eyebrow">Local waiting room demo</p>
+    <div class="shield-icon">&#128737;</div>
+
+    <h1>Security Gateway</h1>
+    <p class="subtitle">
+      This demo mimics a Cloudflare-style waiting room. The site has a hard
+      cap on active sessions, a rolling anomaly detector for sudden entry-rate
+      spikes, and a bounded local simulator instead of unrestricted traffic.
+    </p>
+
+    <div class="hero-actions">
+      <button id="enter-btn" class="btn btn-primary">
+        &#9889; Request Access
+      </button>
+      <a href="admin.html" class="btn btn-secondary">Open Admin Console</a>
+    </div>
+
+    <p id="status-msg" class="status-msg"></p>
+
+    <div class="info-box">
+      <h3>How this demo works</h3>
+      <ol>
+        <li>The visitor asks for a slot.</li>
+        <li>The server checks the active-session cap.</li>
+        <li>If space is available, access is granted for 60 seconds.</li>
+        <li>If capacity is full, the visitor sees the waiting page.</li>
+        <li>The admin console can start a bounded local traffic simulation.</li>
+      </ol>
+    </div>
+
+    <div class="summary-grid">
+      <div class="stat-tile">
+        <span class="stat-label">Active slots</span>
+        <strong id="summary-active">0 / 0</strong>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-label">Block rate</span>
+        <strong id="summary-block-rate">0%</strong>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-label">Simulator pool</span>
+        <strong id="summary-pool">0 / 0</strong>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-label">Mode</span>
+        <strong id="summary-mode">Idle</strong>
+      </div>
+    </div>
+
+    <div class="admin-panel">
+      <div class="panel-heading">
+        <h3>&#128200; Live Snapshot</h3>
+        <a href="admin.html" class="dashboard-link">Open full dashboard</a>
+      </div>
+      <div id="admin-stats">Loading...</div>
+    </div>
+  </div>
+
+  <script src="gateway.js"></script>
+</body>
+</html>
+
+
+
+public/site.html
+site.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Protected Website</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container protected-page">
+    <div class="shield-icon granted">&#9989;</div>
+
+    <h1>Welcome to the Protected Website</h1>
+    <p class="subtitle">
+      You have been verified by the Security Gateway.<br />
+      Your session will expire automatically after 60 seconds.
+    </p>
+
+    <div class="content-box">
+      <h2>&#128272; Confidential Dashboard</h2>
+      <p>
+        This area represents a protected resource — imagine it's a banking
+        portal, admin panel, or any high‑value service that needs to limit
+        concurrent access to prevent overload or abuse.
+      </p>
+      <ul>
+        <li>Your session token is stored temporarily.</li>
+        <li>When you leave, the slot is freed for others.</li>
+        <li>If you do nothing, the slot expires in 60 seconds.</li>
+      </ul>
+    </div>
+
+    <div class="session-info">
+      <p><strong>Session Token:</strong> <span id="token-display">—</span></p>
+      <p><strong>Time Remaining:</strong> <span id="countdown">60</span>s</p>
+    </div>
+
+    <button id="leave-btn" class="btn btn-danger">
+      &#128682; Leave &amp; Free My Slot
+    </button>
+  </div>
+
+  <script>
+    const token = sessionStorage.getItem("gateway-token");
+    const tokenDisplay = document.getElementById("token-display");
+    const countdownEl = document.getElementById("countdown");
+    const leaveBtn = document.getElementById("leave-btn");
+
+
+    if (!token) {
+      document.querySelector(".container").innerHTML = `
+        <div class="shield-icon">&#128683;</div>
+        <h1>Access Denied</h1>
+        <p class="subtitle">You must go through the Security Gateway first.</p>
+        <a href="index.html" class="btn btn-primary">Go to Gateway</a>
+      `;
+    } else {
+      tokenDisplay.textContent = token.slice(0, 16) + "...";
+
+      let seconds = 60;
+      const interval = setInterval(() => {
+        seconds--;
+        countdownEl.textContent = seconds;
+        if (seconds <= 0) {
+          clearInterval(interval);
+          sessionStorage.removeItem("gateway-token");
+          window.location.href = "index.html";
+        }
+      }, 1000);
+
+      leaveBtn.addEventListener("click", async () => {
+        leaveBtn.disabled = true;
+        clearInterval(interval);
+
+        try {
+          await fetch("/api/leave", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token }),
+          });
+        } catch {
+        }
+
+        sessionStorage.removeItem("gateway-token");
+        window.location.href = "index.html";
+      });
+    }
+  </script>
+</body>
+</html>
+
+
+
+public/style.css
+style.css
+:root {
+  --bg-base: #06131b;
+  --bg-layer: #0c1f2a;
+  --panel: rgba(13, 34, 45, 0.86);
+  --panel-strong: rgba(10, 29, 39, 0.94);
+  --line: rgba(118, 216, 198, 0.16);
+  --text-main: #edf7f4;
+  --text-soft: #aac0bf;
+  --accent: #56d1c7;
+  --accent-strong: #2fb4bf;
+  --accent-warm: #f3b562;
+  --danger: #ff7b72;
+  --success: #79d67d;
+  --shadow: 0 22px 60px rgba(0, 0, 0, 0.32);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 20px;
+  font-family: "Aptos", "Bahnschrift", "Trebuchet MS", sans-serif;
+  color: var(--text-main);
+  background:
+    radial-gradient(circle at top left, rgba(86, 209, 199, 0.18), transparent 34%),
+    radial-gradient(circle at top right, rgba(243, 181, 98, 0.18), transparent 26%),
+    linear-gradient(145deg, #041018, #0b1720 56%, #0c2028);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(circle at center, black, transparent 78%);
+}
+
+.admin-body {
+  display: block;
+  padding: 28px 20px 48px;
+}
+
+.container,
+.hero-card,
+.metric-card,
+.chart-card,
+.panel-card {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(12, 31, 42, 0.96), rgba(6, 18, 27, 0.96));
+  box-shadow: var(--shadow);
+}
+
+.container {
+  width: min(100%, 760px);
+  border-radius: 24px;
+  padding: 36px 32px;
+  animation: rise-in 0.5s ease;
+}
+
+.gateway-page {
+  background:
+    radial-gradient(circle at top right, rgba(86, 209, 199, 0.15), transparent 28%),
+    linear-gradient(180deg, rgba(15, 36, 48, 0.98), rgba(6, 18, 27, 0.98));
+}
+
+.protected-page {
+  background:
+    radial-gradient(circle at top right, rgba(121, 214, 125, 0.18), transparent 30%),
+    linear-gradient(180deg, rgba(14, 39, 29, 0.98), rgba(6, 22, 14, 0.98));
+}
+
+.blocked-page {
+  background:
+    radial-gradient(circle at top right, rgba(255, 123, 114, 0.14), transparent 30%),
+    linear-gradient(180deg, rgba(43, 18, 18, 0.98), rgba(21, 8, 8, 0.98));
+}
+
+.eyebrow {
+  margin-bottom: 12px;
+  color: var(--accent);
+  font-size: 0.83rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.shield-icon {
+  font-size: 4.3rem;
+  margin-bottom: 12px;
+}
+
+.shield-icon.granted {
+  filter: hue-rotate(92deg);
+}
+
+.shield-icon.blocked {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+h1 {
+  font-size: clamp(2rem, 4vw, 2.8rem);
+}
+
+h2 {
+  font-size: 1.1rem;
+}
+
+h3 {
+  font-size: 1rem;
+}
+
+.subtitle {
+  margin-top: 12px;
+  color: var(--text-soft);
+  line-height: 1.65;
+  font-size: 1rem;
+}
+
+.hero-actions,
+.control-row,
+.panel-heading,
+.hero-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.hero-actions,
+.control-row {
+  flex-wrap: wrap;
+  margin-top: 24px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 14px;
+  font: inherit;
+  font-weight: 700;
+  color: #031318;
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform 0.18s ease, opacity 0.18s ease, box-shadow 0.18s ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-warm));
+  box-shadow: 0 14px 30px rgba(86, 209, 199, 0.22);
+}
+
+.btn-secondary {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.btn-danger {
+  color: #fff4f2;
+  background: linear-gradient(135deg, #f56f6c, #cc4b43);
+  box-shadow: 0 14px 28px rgba(204, 75, 67, 0.2);
+}
+
+.status-msg {
+  min-height: 1.4rem;
+  margin-top: 14px;
+  font-size: 0.95rem;
+}
+
+.status-msg.success {
+  color: var(--success);
+}
+
+.status-msg.error {
+  color: var(--danger);
+}
+
+.info-box,
+.content-box,
+.session-info,
+.admin-panel,
+.hero-card,
+.metric-card,
+.chart-card,
+.panel-card {
+  border-radius: 18px;
+}
+
+.info-box,
+.content-box,
+.session-info,
+.admin-panel {
+  margin-top: 22px;
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.info-box h3,
+.admin-panel h3 {
+  margin-bottom: 12px;
+}
+
+.info-box ol,
+.info-box ul,
+.content-box ul {
+  padding-left: 20px;
+  line-height: 1.8;
+  color: var(--text-soft);
+}
+
+.info-box.warning {
+  border-color: rgba(255, 123, 114, 0.24);
+  background: rgba(255, 123, 114, 0.08);
+}
+
+.content-box {
+  background: rgba(121, 214, 125, 0.08);
+}
+
+.content-box h2 {
+  color: var(--success);
+  margin-bottom: 8px;
+}
+
+.content-box p,
+.session-info p,
+.admin-panel p {
+  color: var(--text-soft);
+  line-height: 1.65;
+}
+
+.session-info p + p {
+  margin-top: 6px;
+}
+
+.summary-grid,
+.dashboard-grid,
+.state-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.summary-grid {
+  margin-top: 22px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.stat-tile {
+  padding: 18px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.stat-label,
+.metric-label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-soft);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.stat-tile strong,
+.metric-card strong {
+  font-size: 1.5rem;
+}
+
+.admin-panel {
+  background:
+    radial-gradient(circle at top right, rgba(86, 209, 199, 0.12), transparent 28%),
+    rgba(255, 255, 255, 0.04);
+}
+
+.dashboard-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.compact-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+  margin-bottom: 14px;
+}
+
+.compact-metrics p {
+  margin: 0;
+}
+
+.muted-copy {
+  color: var(--text-soft);
+  line-height: 1.65;
+}
+
+.admin-shell {
+  width: min(100%, 1240px);
+  margin: 0 auto;
+}
+
+.hero-card {
+  padding: 26px;
+  margin-bottom: 20px;
+}
+
+.dashboard-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.metric-card,
+.chart-card,
+.panel-card {
+  padding: 22px;
+}
+
+.metric-card p,
+.panel-card p {
+  margin-top: 10px;
+  color: var(--text-soft);
+  line-height: 1.6;
+}
+
+.chart-card-wide,
+.panel-card-wide {
+  grid-column: span 2;
+}
+
+.chart-card {
+  background:
+    linear-gradient(180deg, rgba(11, 28, 38, 0.98), rgba(4, 15, 22, 0.98)),
+    radial-gradient(circle at top right, rgba(86, 209, 199, 0.12), transparent 26%);
+}
+
+.chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: var(--text-soft);
+  font-size: 0.88rem;
+}
+
+.legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border-radius: 50%;
+}
+
+.legend-dot-active {
+  background: var(--accent-warm);
+}
+
+.legend-dot-pool {
+  background: var(--accent);
+}
+
+#traffic-chart {
+  width: 100%;
+  height: 220px;
+  margin-top: 18px;
+  border-radius: 16px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    rgba(255, 255, 255, 0.02);
+  background-size: 100% 44px, 66px 100%;
+}
+
+.chart-line {
+  fill: none;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chart-line-active {
+  stroke: var(--accent-warm);
+}
+
+.chart-line-pool {
+  stroke: var(--accent);
+}
+
+.meter {
+  width: 100%;
+  height: 14px;
+  margin-top: 16px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  transition: width 0.25s ease;
+}
+
+.meter-fill-active {
+  background: linear-gradient(90deg, var(--accent-warm), #ffd88b);
+}
+
+.meter-fill-pool {
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-main);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.duration-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-soft);
+}
+
+.duration-field span {
+  font-size: 0.9rem;
+}
+
+.duration-field input {
+  width: 84px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(2, 10, 16, 0.6);
+  color: var(--text-main);
+  font: inherit;
+}
+
+.state-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 16px;
+}
+
+.state-card {
+  padding: 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.state-card span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-soft);
+  font-size: 0.84rem;
+}
+
+.state-card strong {
+  font-size: 1.4rem;
+}
+
+.event-feed {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.event-item {
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.event-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.event-head time {
+  color: var(--text-soft);
+  font-size: 0.85rem;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  margin-top: 14px;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.admin-table th {
+  color: var(--accent);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.admin-table td {
+  color: var(--text-soft);
+  font-size: 0.92rem;
+}
+
+.table-empty {
+  text-align: center;
+  color: var(--text-soft);
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}
+
+@media (max-width: 1024px) {
+  .dashboard-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  body {
+    padding: 18px 14px 28px;
+  }
+
+  .container,
+  .hero-card,
+  .metric-card,
+  .chart-card,
+  .panel-card {
+    padding: 20px;
+  }
+
+  .summary-grid,
+  .dashboard-grid,
+  .state-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .chart-card-wide,
+  .panel-card-wide {
+    grid-column: span 1;
+  }
+
+  .hero-heading,
+  .panel-heading {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .compact-metrics {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+
+server.js
+server.js
+const crypto = require("crypto");
+const express = require("express");
+const path = require("path");
+
+const app = express();
+
+const PORT = Number(process.env.PORT || 3000);
+const MAX_USERS = Number(process.env.MAX_USERS || 5);
+const USER_TIMEOUT_MS = Number(process.env.USER_TIMEOUT_MS || 60_000);
+const ENTRY_RATE_LIMIT_PER_SECOND = Number(
+  process.env.ENTRY_RATE_LIMIT_PER_SECOND || 20
+);
+
+const SAMPLE_INTERVAL_MS = 1_000;
+const HISTORY_LIMIT = 48;
+const EVENT_LIMIT = 18;
+const RATE_BASELINE_WINDOW_SECONDS = 12;
+const SURGE_STDDEV_MULTIPLIER = 1.8;
+const SURGE_MIN_ABSOLUTE_DELTA = 3;
+const SURGE_COOLDOWN_MS = 10_000;
+
+const DEFAULT_SIMULATION_SECONDS = 30;
+const SIMULATOR_POOL_SIZE = Math.max(MAX_USERS, Math.ceil(MAX_USERS * 1.5));
+const SIMULATOR_PARALLEL_LIMIT = Math.max(2, Math.ceil(MAX_USERS * 0.75));
+const SIMULATOR_TICK_MS = 350;
+const REQUEST_STAGGER_MS = 160;
+const HOLD_RANGE_MS = [7_000, 14_000];
+const COOLDOWN_RANGE_MS = [900, 2_400];
+
+const activeUsers = new Map();
+const dashboardClients = new Set();
+
+const metrics = {
+  startedAt: Date.now(),
+  totalRequests: 0,
+  allowedRequests: 0,
+  blockedRequests: 0,
+  throttledRequests: 0,
+  releasedSessions: 0,
+  expiredSessions: 0,
+  peakActiveUsers: 0,
+  history: [],
+  events: [],
+};
+
+function createAgent(index) {
+  return {
+    id: index + 1,
+    name: `pool-${String(index + 1).padStart(2, "0")}`,
+    ip: `10.24.0.${index + 10}`,
+    state: "idle",
+    token: null,
+    requestTimer: null,
+    holdTimer: null,
+    cooldownTimer: null,
+  };
+}
+
+const simulator = {
+  running: false,
+  startedAt: 0,
+  durationMs: 0,
+  tickTimer: null,
+  stopTimer: null,
+  agents: Array.from(
+    { length: SIMULATOR_POOL_SIZE },
+    (_unused, index) => createAgent(index)
+  ),
+  stats: {
+    attempted: 0,
+    allowed: 0,
+    blocked: 0,
+    recycled: 0,
+  },
+};
+
+const trafficGuard = {
+  secondWindowStartedAt: Date.now(),
+  requestsThisSecond: 0,
+  newEntriesThisSecond: 0,
+  recentRates: Array.from(
+    { length: RATE_BASELINE_WINDOW_SECONDS },
+    () => 0
+  ),
+  currentRate: 0,
+  baselineRate: 0,
+  deviationRate: 0,
+  thresholdRate: SURGE_MIN_ABSOLUTE_DELTA,
+  surgeModeUntil: 0,
+  wasInSurgeMode: false,
+};
+
+app.use(express.json());
+app.use(express.static(path.join(__dirname, "public")));
+
+function maybeUnref(timer) {
+  if (timer && typeof timer.unref === "function") {
+    timer.unref();
+  }
+  return timer;
+}
+
+function shortToken(token) {
+  return `${token.slice(0, 8)}...`;
+}
+
+function randomBetween(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function clearAgentTimers(agent) {
+  for (const key of ["requestTimer", "holdTimer", "cooldownTimer"]) {
+    if (agent[key]) {
+      clearTimeout(agent[key]);
+      agent[key] = null;
+    }
+  }
+}
+
+function roundToTenth(value) {
+  return Math.round(value * 10) / 10;
+}
+
+function summarizeRates(values) {
+  if (!values.length) {
+    return { mean: 0, stddev: 0 };
+  }
+
+  const mean =
+    values.reduce((total, value) => total + value, 0) / values.length;
+  const variance =
+    values.reduce((total, value) => total + (value - mean) ** 2, 0) /
+    values.length;
+
+  return {
+    mean,
+    stddev: Math.sqrt(variance),
+  };
+}
+
+function isSurgeMode(now = Date.now()) {
+  return trafficGuard.surgeModeUntil > now;
+}
+
+function syncSurgeMode(now = Date.now()) {
+  const surgeActive = isSurgeMode(now);
+
+  if (trafficGuard.wasInSurgeMode && !surgeActive) {
+    logEvent(
+      "RELAX",
+      "Entry rate normalized. The gateway returned to steady mode."
+    );
+  }
+
+  trafficGuard.wasInSurgeMode = surgeActive;
+}
+
+function finalizeTrafficSecond(rate, endedAt) {
+  const reference = trafficGuard.recentRates.slice(
+    -RATE_BASELINE_WINDOW_SECONDS
+  );
+  const stats = summarizeRates(reference);
+  const threshold = Math.max(
+    SURGE_MIN_ABSOLUTE_DELTA,
+    Math.ceil(
+      stats.mean +
+        stats.stddev * SURGE_STDDEV_MULTIPLIER +
+        SURGE_MIN_ABSOLUTE_DELTA
+    )
+  );
+
+  trafficGuard.currentRate = rate;
+  trafficGuard.baselineRate = roundToTenth(stats.mean);
+  trafficGuard.deviationRate = roundToTenth(stats.stddev);
+  trafficGuard.thresholdRate = threshold;
+
+  if (rate > threshold) {
+    const alreadyActive = isSurgeMode(endedAt);
+    trafficGuard.surgeModeUntil = Math.max(
+      trafficGuard.surgeModeUntil,
+      endedAt + SURGE_COOLDOWN_MS
+    );
+
+    if (!alreadyActive) {
+      logEvent(
+        "SURGE",
+        `Entry rate jumped to ${rate}/s. New entries are capped at ${ENTRY_RATE_LIMIT_PER_SECOND}/s.`,
+        {
+          rate,
+          baseline: trafficGuard.baselineRate,
+          threshold,
+        }
+      );
+    }
+  }
+
+  trafficGuard.recentRates.push(rate);
+  if (trafficGuard.recentRates.length > HISTORY_LIMIT) {
+    trafficGuard.recentRates.shift();
+  }
+
+  syncSurgeMode(endedAt);
+}
+
+function rollTrafficWindow(now = Date.now()) {
+  while (now - trafficGuard.secondWindowStartedAt >= SAMPLE_INTERVAL_MS) {
+    finalizeTrafficSecond(
+      trafficGuard.requestsThisSecond,
+      trafficGuard.secondWindowStartedAt + SAMPLE_INTERVAL_MS
+    );
+    trafficGuard.secondWindowStartedAt += SAMPLE_INTERVAL_MS;
+    trafficGuard.requestsThisSecond = 0;
+    trafficGuard.newEntriesThisSecond = 0;
+  }
+
+  syncSurgeMode(now);
+}
+
+function isLocalRequest(req) {
+  return ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
+    req.ip || req.socket?.remoteAddress || ""
+  );
+}
+
+function requireLocal(req, res, next) {
+  if (!isLocalRequest(req)) {
+    return res
+      .status(403)
+      .json({ error: "Admin controls are limited to localhost." });
+  }
+
+  return next();
+}
+
+function findSessionByIp(ip) {
+  for (const [token, session] of activeUsers) {
+    if (session.ip === ip) {
+      return { token, session };
+    }
+  }
+
+  return null;
+}
+
+function logEvent(type, message, detail = {}) {
+  metrics.events.unshift({
+    type,
+    message,
+    time: Date.now(),
+    detail,
+  });
+  metrics.events = metrics.events.slice(0, EVENT_LIMIT);
+}
+
+function getSimulatorStateCounts() {
+  return simulator.agents.reduce(
+    (counts, agent) => {
+      counts[agent.state] += 1;
+      return counts;
+    },
+    { idle: 0, requesting: 0, holding: 0, cooldown: 0 }
+  );
+}
+
+function getBusyAgentCount() {
+  return simulator.agents.filter((agent) => agent.state !== "idle").length;
+}
+
+function buildSessions() {
+  return [...activeUsers.entries()]
+    .sort((left, right) => left[1].createdAt - right[1].createdAt)
+    .map(([token, session]) => {
+      const ageMs = Date.now() - session.createdAt;
+      return {
+        token: shortToken(token),
+        ip: session.ip,
+        label: session.label,
+        source: session.source,
+        ageSeconds: Math.max(0, Math.round(ageMs / 1_000)),
+        expiresInSeconds: Math.max(
+          0,
+          Math.ceil((USER_TIMEOUT_MS - ageMs) / 1_000)
+        ),
+      };
+    });
+}
+
+function buildSnapshot() {
+  rollTrafficWindow(Date.now());
+
+  const blockRate =
+    metrics.totalRequests === 0
+      ? 0
+      : Math.round((metrics.blockedRequests / metrics.totalRequests) * 100);
+  const surgeMode = isSurgeMode();
+
+  return {
+    activeUsers: activeUsers.size,
+    maxUsers: MAX_USERS,
+    timeoutSeconds: Math.round(USER_TIMEOUT_MS / 1_000),
+    sessions: buildSessions(),
+    metrics: {
+      totalRequests: metrics.totalRequests,
+      allowedRequests: metrics.allowedRequests,
+      blockedRequests: metrics.blockedRequests,
+      throttledRequests: metrics.throttledRequests,
+      releasedSessions: metrics.releasedSessions,
+      expiredSessions: metrics.expiredSessions,
+      peakActiveUsers: metrics.peakActiveUsers,
+      blockRate,
+      uptimeSeconds: Math.round((Date.now() - metrics.startedAt) / 1_000),
+    },
+    simulator: {
+      running: simulator.running,
+      poolSize: SIMULATOR_POOL_SIZE,
+      parallelLimit: SIMULATOR_PARALLEL_LIMIT,
+      durationSeconds: Math.round(simulator.durationMs / 1_000),
+      elapsedSeconds: simulator.startedAt
+        ? Math.round((Date.now() - simulator.startedAt) / 1_000)
+        : 0,
+      states: getSimulatorStateCounts(),
+      busyAgents: getBusyAgentCount(),
+      attempted: simulator.stats.attempted,
+      allowed: simulator.stats.allowed,
+      blocked: simulator.stats.blocked,
+      recycled: simulator.stats.recycled,
+    },
+    traffic: {
+      surgeMode,
+      allowedPerSecond: ENTRY_RATE_LIMIT_PER_SECOND,
+      liveRate: trafficGuard.requestsThisSecond,
+      lastSecondRate: trafficGuard.currentRate,
+      baselineRate: trafficGuard.baselineRate,
+      deviationRate: trafficGuard.deviationRate,
+      thresholdRate: trafficGuard.thresholdRate,
+      gateRemainingThisSecond: surgeMode
+        ? Math.max(
+            0,
+            ENTRY_RATE_LIMIT_PER_SECOND - trafficGuard.newEntriesThisSecond
+          )
+        : ENTRY_RATE_LIMIT_PER_SECOND,
+      cooldownSeconds: surgeMode
+        ? Math.max(
+            0,
+            Math.ceil((trafficGuard.surgeModeUntil - Date.now()) / 1_000)
+          )
+        : 0,
+    },
+    history: metrics.history,
+    events: metrics.events,
+  };
+}
+
+function broadcastSnapshot() {
+  const payload = `data: ${JSON.stringify(buildSnapshot())}\n\n`;
+
+  for (const client of dashboardClients) {
+    try {
+      client.write(payload);
+    } catch {
+      dashboardClients.delete(client);
+    }
+  }
+}
+
+function captureSample() {
+  rollTrafficWindow(Date.now());
+
+  metrics.history.push({
+    time: Date.now(),
+    activeUsers: activeUsers.size,
+    simulatorBusy: getBusyAgentCount(),
+    totalRequests: metrics.totalRequests,
+    blockedRequests: metrics.blockedRequests,
+    requestRate: trafficGuard.currentRate,
+    thresholdRate: trafficGuard.thresholdRate,
+    surgeMode: isSurgeMode(),
+  });
+
+  if (metrics.history.length > HISTORY_LIMIT) {
+    metrics.history.shift();
+  }
+
+  broadcastSnapshot();
+}
+
+function onSimulatorSessionClosed(agentId, reason) {
+  const agent = simulator.agents.find((item) => item.id === agentId);
+  if (!agent) {
+    return;
+  }
+
+  clearAgentTimers(agent);
+  agent.token = null;
+
+  if (!simulator.running) {
+    agent.state = "idle";
+    return;
+  }
+
+  logEvent("RECYCLE", `${agent.name} returned to the pool. Reason: ${reason}.`, {
+    agentId,
+  });
+
+  agent.state = "cooldown";
+  agent.cooldownTimer = maybeUnref(
+    setTimeout(() => {
+      agent.cooldownTimer = null;
+      agent.state = "idle";
+      simulator.stats.recycled += 1;
+      launchSimulatorWave();
+      broadcastSnapshot();
+    }, randomBetween(COOLDOWN_RANGE_MS[0], COOLDOWN_RANGE_MS[1]))
+  );
+}
+
+function closeSession(token, reason, options = {}) {
+  const session = activeUsers.get(token);
+  if (!session) {
+    return false;
+  }
+
+  clearTimeout(session.timer);
+  activeUsers.delete(token);
+
+  if (reason === "expired") {
+    metrics.expiredSessions += 1;
+  } else {
+    metrics.releasedSessions += 1;
+  }
+
+  if (!options.silent) {
+    const type = reason === "expired" ? "EXPIRED" : "RELEASED";
+    const message =
+      reason === "expired"
+        ? `${session.label} (${session.ip}) timed out.`
+        : `${session.label} (${session.ip}) ${reason}.`;
+    logEvent(type, message, {
+      ip: session.ip,
+      source: session.source,
+      token: shortToken(token),
+    });
+  }
+
+  if (session.agentId) {
+    onSimulatorSessionClosed(session.agentId, reason);
+  }
+
+  broadcastSnapshot();
+  return true;
+}
+
+function requestAccess({ ip, source, label, agentId = null }) {
+  const now = Date.now();
+  rollTrafficWindow(now);
+
+  metrics.totalRequests += 1;
+  trafficGuard.requestsThisSecond += 1;
+
+  const existing = findSessionByIp(ip);
+  if (existing) {
+    metrics.allowedRequests += 1;
+    logEvent("REUSED", `${label} reused ${shortToken(existing.token)}.`, {
+      ip,
+      source,
+      token: shortToken(existing.token),
+    });
+    broadcastSnapshot();
+    return { allowed: true, token: existing.token, reused: true };
+  }
+
+  if (
+    isSurgeMode(now) &&
+    trafficGuard.newEntriesThisSecond >= ENTRY_RATE_LIMIT_PER_SECOND
+  ) {
+    metrics.blockedRequests += 1;
+    metrics.throttledRequests += 1;
+    logEvent(
+      "THROTTLED",
+      `${label} (${ip}) was held at the surge gate after ${ENTRY_RATE_LIMIT_PER_SECOND} new entries in the current second.`,
+      { ip, source, reason: "surge-throttled" }
+    );
+    broadcastSnapshot();
+    return {
+      allowed: false,
+      reason: "surge-throttled",
+      message: `Traffic spike detected. New entries are temporarily limited to ${ENTRY_RATE_LIMIT_PER_SECOND}/s.`,
+    };
+  }
+
+  trafficGuard.newEntriesThisSecond += 1;
+
+  if (activeUsers.size >= MAX_USERS) {
+    metrics.blockedRequests += 1;
+    logEvent(
+      "BLOCKED",
+      `${label} (${ip}) was denied at ${activeUsers.size}/${MAX_USERS}.`,
+      { ip, source }
+    );
+    broadcastSnapshot();
+    return {
+      allowed: false,
+      reason: "capacity-full",
+      message: "Capacity is full right now.",
+    };
+  }
+
+  const token = crypto.randomBytes(16).toString("hex");
+  const session = {
+    ip,
+    source,
+    label,
+    agentId,
+    createdAt: Date.now(),
+    timer: null,
+  };
+
+  session.timer = maybeUnref(
+    setTimeout(() => closeSession(token, "expired"), USER_TIMEOUT_MS)
+  );
+
+  activeUsers.set(token, session);
+  metrics.allowedRequests += 1;
+  metrics.peakActiveUsers = Math.max(metrics.peakActiveUsers, activeUsers.size);
+
+  logEvent("ALLOWED", `${label} (${ip}) received ${shortToken(token)}.`, {
+    ip,
+    source,
+    token: shortToken(token),
+  });
+  broadcastSnapshot();
+
+  return { allowed: true, token, reused: false };
+}
+
+function scheduleAgentAttempt(agent, delayMs) {
+  clearAgentTimers(agent);
+  agent.state = "requesting";
+
+  agent.requestTimer = maybeUnref(
+    setTimeout(() => {
+      agent.requestTimer = null;
+
+      if (!simulator.running || agent.state !== "requesting") {
+        agent.state = "idle";
+        broadcastSnapshot();
+        return;
+      }
+
+      simulator.stats.attempted += 1;
+
+      const result = requestAccess({
+        ip: agent.ip,
+        source: "simulator",
+        label: agent.name,
+        agentId: agent.id,
+      });
+
+      if (!result.allowed) {
+        simulator.stats.blocked += 1;
+        agent.state = "cooldown";
+        agent.cooldownTimer = maybeUnref(
+          setTimeout(() => {
+            agent.cooldownTimer = null;
+            agent.state = "idle";
+            simulator.stats.recycled += 1;
+            launchSimulatorWave();
+            broadcastSnapshot();
+          }, randomBetween(COOLDOWN_RANGE_MS[0], COOLDOWN_RANGE_MS[1]))
+        );
+        broadcastSnapshot();
+        return;
+      }
+
+      simulator.stats.allowed += 1;
+      agent.state = "holding";
+      agent.token = result.token;
+
+      const holdMs = randomBetween(HOLD_RANGE_MS[0], HOLD_RANGE_MS[1]);
+      agent.holdTimer = maybeUnref(
+          setTimeout(() => {
+          agent.holdTimer = null;
+          if (agent.token) {
+            closeSession(agent.token, "completed its hold window", {
+              silent: true,
+            });
+          }
+        }, holdMs)
+      );
+
+      broadcastSnapshot();
+    }, delayMs)
+  );
+}
+
+function launchSimulatorWave() {
+  if (!simulator.running) {
+    return;
+  }
+
+  const requestingCount = simulator.agents.filter(
+    (agent) => agent.state === "requesting"
+  ).length;
+  const availableLaunches = SIMULATOR_PARALLEL_LIMIT - requestingCount;
+
+  if (availableLaunches <= 0) {
+    return;
+  }
+
+  const idleAgents = simulator.agents
+    .filter((agent) => agent.state === "idle")
+    .slice(0, availableLaunches);
+
+  idleAgents.forEach((agent, index) => {
+    scheduleAgentAttempt(agent, index * REQUEST_STAGGER_MS);
+  });
+}
+
+function stopSimulator(reason = "stopped by operator") {
+  const wasRunning = simulator.running;
+  simulator.running = false;
+
+  if (simulator.tickTimer) {
+    clearInterval(simulator.tickTimer);
+    simulator.tickTimer = null;
+  }
+
+  if (simulator.stopTimer) {
+    clearTimeout(simulator.stopTimer);
+    simulator.stopTimer = null;
+  }
+
+  for (const agent of simulator.agents) {
+    clearAgentTimers(agent);
+  }
+
+  const tokensToRelease = simulator.agents
+    .map((agent) => agent.token)
+    .filter(Boolean);
+
+  for (const token of tokensToRelease) {
+    closeSession(token, "was cleared during simulator shutdown", {
+      silent: true,
+    });
+  }
+
+  for (const agent of simulator.agents) {
+    agent.token = null;
+    agent.state = "idle";
+  }
+
+  if (wasRunning) {
+    logEvent("SIM_STOP", `Local simulator stopped: ${reason}.`, { reason });
+  }
+
+  broadcastSnapshot();
+}
+
+function startSimulator(durationSeconds = DEFAULT_SIMULATION_SECONDS) {
+  if (simulator.running) {
+    return buildSnapshot();
+  }
+
+  const boundedSeconds = clamp(
+    Math.round(durationSeconds),
+    10,
+    180
+  );
+
+  simulator.running = true;
+  simulator.startedAt = Date.now();
+  simulator.durationMs = boundedSeconds * 1_000;
+  simulator.stats = {
+    attempted: 0,
+    allowed: 0,
+    blocked: 0,
+    recycled: 0,
+  };
+
+  for (const agent of simulator.agents) {
+    clearAgentTimers(agent);
+    agent.state = "idle";
+    agent.token = null;
+  }
+
+  simulator.tickTimer = maybeUnref(
+    setInterval(launchSimulatorWave, SIMULATOR_TICK_MS)
+  );
+  simulator.stopTimer = maybeUnref(
+    setTimeout(
+      () => stopSimulator("time window completed"),
+      simulator.durationMs
+    )
+  );
+
+  logEvent(
+    "SIM_START",
+    `Local simulator started for ${boundedSeconds}s. Pool ${SIMULATOR_POOL_SIZE}, parallel attempts ${SIMULATOR_PARALLEL_LIMIT}.`,
+    {
+      durationSeconds: boundedSeconds,
+      poolSize: SIMULATOR_POOL_SIZE,
+      parallelLimit: SIMULATOR_PARALLEL_LIMIT,
+    }
+  );
+
+  launchSimulatorWave();
+  broadcastSnapshot();
+  return buildSnapshot();
+}
+
+app.post("/api/request-access", (req, res) => {
+  const result = requestAccess({
+    ip: req.ip,
+    source: "browser",
+    label: "browser visitor",
+  });
+
+  res.json(result);
+});
+
+app.post("/api/leave", (req, res) => {
+  const token = req.body?.token;
+
+  if (token) {
+    closeSession(token, "left the site");
+  }
+
+  res.json({ success: true });
+});
+
+app.get("/api/status", (_req, res) => {
+  res.json(buildSnapshot());
+});
+
+app.get("/api/dashboard/stream", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  dashboardClients.add(res);
+  res.write(`data: ${JSON.stringify(buildSnapshot())}\n\n`);
+
+  req.on("close", () => {
+    dashboardClients.delete(res);
+  });
+});
+
+app.post("/api/simulator/start", requireLocal, (req, res) => {
+  const snapshot = startSimulator(req.body?.durationSeconds);
+  res.json({ success: true, snapshot });
+});
+
+app.post("/api/simulator/stop", requireLocal, (_req, res) => {
+  stopSimulator("stopped from admin controls");
+  res.json({ success: true, snapshot: buildSnapshot() });
+});
+
+captureSample();
+maybeUnref(setInterval(captureSample, SAMPLE_INTERVAL_MS));
+
+app.listen(PORT, () => {
+  console.log();
+  console.log("==============================================");
+  console.log(" Security Gateway Waiting Room Demo");
+  console.log("==============================================");
+  console.log(` Visitor page      : http://localhost:${PORT}`);
+  console.log(` Admin dashboard   : http://localhost:${PORT}/admin.html`);
+  console.log(` Capacity cap      : ${MAX_USERS} active sessions`);
+  console.log(` Surge gate        : ${ENTRY_RATE_LIMIT_PER_SECOND} new entries/s`);
+  console.log(` Session timeout   : ${USER_TIMEOUT_MS / 1_000}s`);
+  console.log(` Simulator pool    : ${SIMULATOR_POOL_SIZE} agents`);
+  console.log(` Parallel attempts : ${SIMULATOR_PARALLEL_LIMIT}`);
+  console.log("==============================================");
+  console.log();
+});
+
+
+
+start-server.bat
+start-server.bat
+@echo off
+echo  Website Rate Limiting Security Gateway
+echo.
+
+taskkill /IM node.exe /F >nul 2>&1
+timeout /t 1 /nobreak >nul
+
+cd /d "%~dp0"
+set "NODE_BIN=%ProgramFiles%\nodejs\node.exe"
+if not exist "%NODE_BIN%" set "NODE_BIN=node"
+
+echo Starting server on http://localhost:3000 ...
+echo Admin dashboard: http://localhost:3000/admin.html
+echo Press Ctrl+C to stop.
+echo.
+
+"%NODE_BIN%" server.js
+pause
+
+
+
+test-it.bat
+test-it.bat
+@echo off
+echo  Bounded Traffic Pressure Demo
+echo.
+cd /d "%~dp0"
+
+set "NODE_BIN=%ProgramFiles%\nodejs\node.exe"
+if not exist "%NODE_BIN%" set "NODE_BIN=node"
+if "%DEMO_DURATION_SECONDS%"=="" set "DEMO_DURATION_SECONDS=30"
+
+"%NODE_BIN%" ddos-test.js
+echo.
+pause
