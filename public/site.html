@@ -47,7 +47,7 @@
     const leaveBtn = document.getElementById("leave-btn");
     let releaseSent = false;
     let sessionEnding = false;
-    let pagehideAttached = false;
+    let isPagehideListenerActive = false;
 
     async function releaseSession() {
       if (releaseSent || !token) return;
@@ -76,13 +76,17 @@
       }
     }
 
+    const onPageHide = () => {
+      releaseSession();
+    };
+
     async function handleSessionEnd() {
       if (sessionEnding) return;
       sessionEnding = true;
 
-      if (pagehideAttached) {
-        window.removeEventListener("pagehide", releaseSession);
-        pagehideAttached = false;
+      if (isPagehideListenerActive) {
+        window.removeEventListener("pagehide", onPageHide);
+        isPagehideListenerActive = false;
       }
 
       await releaseSession();
@@ -101,8 +105,8 @@
     } else {
       tokenDisplay.textContent = token.slice(0, 16) + "...";
 
-      window.addEventListener("pagehide", releaseSession);
-      pagehideAttached = true;
+      window.addEventListener("pagehide", onPageHide);
+      isPagehideListenerActive = true;
 
       let seconds = 60;
       const interval = setInterval(() => {
