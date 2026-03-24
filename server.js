@@ -97,11 +97,12 @@ const trafficGuard = {
   secondWindowStartedAt: Date.now(),
   requestsThisSecond: 0,
   newEntriesThisSecond: 0,
+  newEntryAttemptsThisSecond: 0,
   recentRates: Array.from(
     { length: RATE_BASELINE_WINDOW_SECONDS },
     () => 0
   ),
-  recentNewEntries: Array.from(
+  recentNewEntryAttempts: Array.from(
     { length: RATE_BASELINE_WINDOW_SECONDS },
     () => 0
   ),
@@ -256,7 +257,7 @@ function finalizeTrafficSecond(rate, newEntryRate, endedAt) {
   trafficGuard.deviationRate = roundToTenth(stats.stddev);
   trafficGuard.thresholdRate = threshold;
 
-  const newRef = trafficGuard.recentNewEntries.slice(
+  const newRef = trafficGuard.recentNewEntryAttempts.slice(
     -RATE_BASELINE_WINDOW_SECONDS
   );
   const newStats = summarizeRates(newRef);
@@ -340,9 +341,9 @@ function finalizeTrafficSecond(rate, newEntryRate, endedAt) {
     trafficGuard.recentRates.shift();
   }
 
-  trafficGuard.recentNewEntries.push(newEntryRate);
-  if (trafficGuard.recentNewEntries.length > HISTORY_LIMIT) {
-    trafficGuard.recentNewEntries.shift();
+  trafficGuard.recentNewEntryAttempts.push(newEntryRate);
+  if (trafficGuard.recentNewEntryAttempts.length > HISTORY_LIMIT) {
+    trafficGuard.recentNewEntryAttempts.shift();
   }
 
   syncSurgeMode(endedAt);
@@ -352,12 +353,13 @@ function rollTrafficWindow(now = Date.now()) {
   while (now - trafficGuard.secondWindowStartedAt >= SAMPLE_INTERVAL_MS) {
     finalizeTrafficSecond(
       trafficGuard.requestsThisSecond,
-      trafficGuard.newEntriesThisSecond,
+      trafficGuard.newEntryAttemptsThisSecond,
       trafficGuard.secondWindowStartedAt + SAMPLE_INTERVAL_MS
     );
     trafficGuard.secondWindowStartedAt += SAMPLE_INTERVAL_MS;
     trafficGuard.requestsThisSecond = 0;
     trafficGuard.newEntriesThisSecond = 0;
+    trafficGuard.newEntryAttemptsThisSecond = 0;
   }
 
   syncSurgeMode(now);
@@ -487,11 +489,12 @@ function buildSnapshot() {
       baselineRate: trafficGuard.baselineRate,
       deviationRate: trafficGuard.deviationRate,
       thresholdRate: trafficGuard.thresholdRate,
-      liveNewEntryRate: trafficGuard.newEntriesThisSecond,
+      liveNewEntryRate: trafficGuard.newEntryAttemptsThisSecond,
       lastSecondNewEntryRate: trafficGuard.currentNewEntryRate,
       baselineNewEntryRate: trafficGuard.baselineNewEntryRate,
       deviationNewEntryRate: trafficGuard.deviationNewEntryRate,
       thresholdNewEntryRate: trafficGuard.thresholdNewEntryRate,
+      admittedNewEntriesThisSecond: trafficGuard.newEntriesThisSecond,
       gateRemainingThisSecond: surgeMode
         ? Math.max(
             0,
@@ -638,22 +641,7 @@ function requestAccess({ ip, source, label, agentId = null }) {
     return { allowed: true, token: existing.token, reused: true };
   }
 
-  const reputation = getReputation(ip);
-  if (reputation.blockedUntil > now) {
-    metrics.blockedRequests += 1;
-    metrics.reputationBlocks += 1;
-    logEvent(
-      "REPUTATION_DENY",
-      `${label} (${ip}) suppressed by reputation cooldown.`,
-      { ip, source, reason: "reputation-blocked" }
-    );
-    broadcastSnapshot();
-    return {
-      allowed: false,
-      reason: "reputation-blocked",
-      message: "Source temporarily suppressed after repeated denials.",
-    };
-  }
+  trafficGuard.newEntryAttemptsThisSecond += 1;
 
   if (isOnboardingBlocked(now)) {
     metrics.blockedRequests += 1;
@@ -670,6 +658,23 @@ function requestAccess({ ip, source, label, agentId = null }) {
       reason: "onboarding-blocked",
       message:
         "High influx of new users detected. Please retry shortly while onboarding stabilizes.",
+    };
+  }
+
+  const reputation = getReputation(ip);
+  if (reputation.blockedUntil > now) {
+    metrics.blockedRequests += 1;
+    metrics.reputationBlocks += 1;
+    logEvent(
+      "REPUTATION_DENY",
+      `${label} (${ip}) suppressed by reputation cooldown.`,
+      { ip, source, reason: "reputation-blocked" }
+    );
+    broadcastSnapshot();
+    return {
+      allowed: false,
+      reason: "reputation-blocked",
+      message: "Source temporarily suppressed after repeated denials.",
     };
   }
 
