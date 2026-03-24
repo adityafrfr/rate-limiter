@@ -53,18 +53,24 @@
 
       const payload = JSON.stringify({ token });
 
+      let sent = false;
       if (navigator.sendBeacon) {
-        navigator.sendBeacon("/api/leave", new Blob([payload], { type: "application/json" }));
-        return;
+        sent = navigator.sendBeacon(
+          "/api/leave",
+          new Blob([payload], { type: "application/json" })
+        );
       }
 
-      try {
-        await fetch("/api/leave", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: payload,
-        });
-      } catch {
+      if (!sent) {
+        try {
+          await fetch("/api/leave", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: payload,
+          });
+        } catch (error) {
+          console.error("Failed to release session", error);
+        }
       }
     }
 
@@ -90,6 +96,8 @@
           window.location.href = "index.html";
         }
       }, 1000);
+
+      window.addEventListener("pagehide", releaseSession);
 
       leaveBtn.addEventListener("click", async () => {
         leaveBtn.disabled = true;
