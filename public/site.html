@@ -95,12 +95,13 @@
       }
 
       let seconds = 60;
-      const interval = setInterval(() => {
+      const interval = setInterval(async () => {
         seconds--;
         countdownEl.textContent = seconds;
         if (seconds <= 0) {
           clearInterval(interval);
-          handleSessionEnd();
+          window.removeEventListener("pagehide", releaseSession);
+          await handleSessionEnd();
         }
       }, 1000);
 
