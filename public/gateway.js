@@ -29,9 +29,10 @@ enterBtn.addEventListener("click", async () => {
     }
 
     statusMsg.textContent =
-      data.reason === "surge-throttled"
+      data.message ||
+      (data.reason === "surge-throttled"
         ? data.message
-        : "Capacity is full. Redirecting...";
+        : "Capacity is full. Redirecting...");
     statusMsg.classList.add("error");
     setTimeout(() => {
       window.location.href = `blocked.html?reason=${encodeURIComponent(

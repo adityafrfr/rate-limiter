@@ -24,6 +24,9 @@ const MIN_SURGE_ENTRY_RATE = 10;
 const ONBOARDING_BLOCK_WINDOW_MS = 8_000;
 const DYNAMIC_CAPACITY_FACTOR = 0.35;
 const DYNAMIC_CAPACITY_MAX_MULTIPLIER = 5;
+const REPUTATION_STRIKE_LIMIT = 3;
+const REPUTATION_BLOCK_MS = 15_000;
+const REPUTATION_DECAY_MS = 30_000;
 
 const DEFAULT_SIMULATION_SECONDS = 30;
 const SIMULATOR_POOL_SIZE = Math.max(MAX_USERS, Math.ceil(MAX_USERS * 1.5));
@@ -41,6 +44,7 @@ const MAX_DYNAMIC_CAPACITY = Math.max(
 let dynamicCapacityCap = MAX_USERS;
 
 const activeUsers = new Map();
+const ipReputation = new Map();
 const dashboardClients = new Set();
 
 const metrics = {
@@ -50,6 +54,7 @@ const metrics = {
   blockedRequests: 0,
   throttledRequests: 0,
   onboardingBlocks: 0,
+  reputationBlocks: 0,
   releasedSessions: 0,
   expiredSessions: 0,
   peakActiveUsers: 0,
@@ -134,6 +139,42 @@ function randomBetween(min, max) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function getReputation(ip) {
+  const entry =
+    ipReputation.get(ip) || { strikes: 0, blockedUntil: 0, lastStrikeAt: 0 };
+
+  if (entry.lastStrikeAt && Date.now() - entry.lastStrikeAt > REPUTATION_DECAY_MS) {
+    entry.strikes = 0;
+  }
+
+  ipReputation.set(ip, entry);
+  return entry;
+}
+
+function recordReputationStrike(ip, reason) {
+  const now = Date.now();
+  const entry = getReputation(ip);
+
+  if (entry.lastStrikeAt && now - entry.lastStrikeAt > REPUTATION_DECAY_MS) {
+    entry.strikes = 0;
+  }
+
+  entry.strikes += 1;
+  entry.lastStrikeAt = now;
+
+  if (entry.strikes >= REPUTATION_STRIKE_LIMIT) {
+    entry.blockedUntil = Math.max(entry.blockedUntil, now + REPUTATION_BLOCK_MS);
+    entry.strikes = 0;
+    logEvent(
+      "REPUTATION_BLOCK",
+      `${ip} temporarily suppressed after repeated denials.`,
+      { ip, reason, until: entry.blockedUntil }
+    );
+  }
+
+  ipReputation.set(ip, entry);
 }
 
 function clearAgentTimers(agent) {
@@ -421,6 +462,7 @@ function buildSnapshot() {
       blockedRequests: metrics.blockedRequests,
       throttledRequests: metrics.throttledRequests,
       onboardingBlocks: metrics.onboardingBlocks,
+      reputationBlocks: metrics.reputationBlocks,
       releasedSessions: metrics.releasedSessions,
       expiredSessions: metrics.expiredSessions,
       peakActiveUsers: metrics.peakActiveUsers,
@@ -602,11 +644,29 @@ function requestAccess({ ip, source, label, agentId = null }) {
     return { allowed: true, token: existing.token, reused: true };
   }
 
+  const reputation = getReputation(ip);
+  if (reputation.blockedUntil > now) {
+    metrics.blockedRequests += 1;
+    metrics.reputationBlocks += 1;
+    logEvent(
+      "REPUTATION_DENY",
+      `${label} (${ip}) suppressed by reputation cooldown.`,
+      { ip, source, reason: "reputation-blocked" }
+    );
+    broadcastSnapshot();
+    return {
+      allowed: false,
+      reason: "reputation-blocked",
+      message: "Source temporarily suppressed after repeated denials.",
+    };
+  }
+
   trafficGuard.newEntriesThisSecond += 1;
 
   if (isOnboardingBlocked(now)) {
     metrics.blockedRequests += 1;
     metrics.onboardingBlocks += 1;
+    recordReputationStrike(ip, "onboarding-blocked");
     logEvent(
       "BLOCKED_NEW",
       `${label} (${ip}) blocked due to new-user surge guard.`,
@@ -625,6 +685,7 @@ function requestAccess({ ip, source, label, agentId = null }) {
   if (isSurgeMode(now) && trafficGuard.newEntriesThisSecond > surgeGateLimit) {
     metrics.blockedRequests += 1;
     metrics.throttledRequests += 1;
+    recordReputationStrike(ip, "surge-throttled");
     logEvent(
       "THROTTLED",
       `${label} (${ip}) was held at the surge gate after ${surgeGateLimit} new entries in the current second.`,
