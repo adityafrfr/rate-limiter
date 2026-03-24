@@ -22,9 +22,10 @@ const NEW_USER_STDDEV_MULTIPLIER = 2.1;
 const NEW_USER_MIN_ABSOLUTE_DELTA = 2;
 const SURGE_GATE_FLOOR = 10;
 const ONBOARDING_BLOCK_WINDOW_MS = 8_000;
-const ONBOARDING_BLOCK_WINDOW_SECONDS = ONBOARDING_BLOCK_WINDOW_MS / 1_000;
+const ONBOARDING_BLOCK_SECONDS = ONBOARDING_BLOCK_WINDOW_MS / 1_000;
 const DYNAMIC_CAPACITY_FACTOR = 0.35;
 const DYNAMIC_CAPACITY_MAX_MULTIPLIER = 5;
+const SURGE_GATE_LIMIT = Math.max(ENTRY_RATE_LIMIT_PER_SECOND, SURGE_GATE_FLOOR);
 const DYNAMIC_CAPACITY_FLOOR = MAX_USERS;
 const DYNAMIC_CAPACITY_CEILING = Math.max(
   Math.ceil(MAX_USERS * DYNAMIC_CAPACITY_MAX_MULTIPLIER),
@@ -98,7 +99,7 @@ const simulator = {
 const trafficGuard = {
   secondWindowStartedAt: Date.now(),
   requestsThisSecond: 0,
-  newEntriesThisSecond: 0,
+  admittedNewEntriesThisSecond: 0,
   newEntryAttemptsThisSecond: 0,
   recentRates: Array.from(
     { length: RATE_BASELINE_WINDOW_SECONDS },
@@ -293,10 +294,7 @@ function finalizeTrafficSecond(rate, newEntryRate, endedAt) {
     if (!alreadyActive) {
       logEvent(
         "SURGE",
-        `Entry rate jumped to ${rate}/s. New entries are capped at ${Math.max(
-          ENTRY_RATE_LIMIT_PER_SECOND,
-          SURGE_GATE_FLOOR
-        )}/s.`,
+        `Entry rate jumped to ${rate}/s. New entries are capped at ${SURGE_GATE_LIMIT}/s.`,
         {
           rate,
           baseline: trafficGuard.baselineRate,
@@ -316,7 +314,7 @@ function finalizeTrafficSecond(rate, newEntryRate, endedAt) {
     if (!alreadyBlocked) {
       logEvent(
         "ONBOARDING_BLOCK",
-        `New-user surge detected at ${newEntryRate}/s (baseline ${trafficGuard.baselineNewEntryRate}/s, threshold ${newEntryThreshold}/s). Onboarding gated for ${ONBOARDING_BLOCK_WINDOW_SECONDS}s.`,
+        `New-user surge detected at ${newEntryRate}/s (baseline ${trafficGuard.baselineNewEntryRate}/s, threshold ${newEntryThreshold}/s). Onboarding gated for ${ONBOARDING_BLOCK_SECONDS}s.`,
         {
           rate: newEntryRate,
           baseline: trafficGuard.baselineNewEntryRate,
@@ -372,7 +370,7 @@ function rollTrafficWindow(now = Date.now()) {
     );
     trafficGuard.secondWindowStartedAt += SAMPLE_INTERVAL_MS;
     trafficGuard.requestsThisSecond = 0;
-    trafficGuard.newEntriesThisSecond = 0;
+    trafficGuard.admittedNewEntriesThisSecond = 0;
     trafficGuard.newEntryAttemptsThisSecond = 0;
   }
 
@@ -452,7 +450,7 @@ function buildSessions() {
 function buildSnapshot() {
   rollTrafficWindow(Date.now());
 
-  const surgeGateLimit = Math.max(ENTRY_RATE_LIMIT_PER_SECOND, SURGE_GATE_FLOOR);
+  const surgeGateLimit = SURGE_GATE_LIMIT;
   const blockRate =
     metrics.totalRequests === 0
       ? 0
@@ -508,11 +506,11 @@ function buildSnapshot() {
       baselineNewEntryRate: trafficGuard.baselineNewEntryRate,
       deviationNewEntryRate: trafficGuard.deviationNewEntryRate,
       thresholdNewEntryRate: trafficGuard.thresholdNewEntryRate,
-      admittedNewEntriesThisSecond: trafficGuard.newEntriesThisSecond,
+      admittedNewEntriesThisSecond: trafficGuard.admittedNewEntriesThisSecond,
       gateRemainingThisSecond: surgeMode
         ? Math.max(
             0,
-            surgeGateLimit - trafficGuard.newEntriesThisSecond
+            surgeGateLimit - trafficGuard.admittedNewEntriesThisSecond
           )
         : surgeGateLimit,
       cooldownSeconds: surgeMode
@@ -691,8 +689,8 @@ function requestAccess({ ip, source, label, agentId = null }) {
         "High influx of new users detected. Please retry shortly while onboarding stabilizes.",
     };
   }
-  const surgeGateLimit = Math.max(ENTRY_RATE_LIMIT_PER_SECOND, SURGE_GATE_FLOOR);
-  if (isSurgeMode(now) && trafficGuard.newEntriesThisSecond >= surgeGateLimit) {
+  const surgeGateLimit = SURGE_GATE_LIMIT;
+  if (isSurgeMode(now) && trafficGuard.admittedNewEntriesThisSecond >= surgeGateLimit) {
     metrics.blockedRequests += 1;
     metrics.throttledRequests += 1;
     recordReputationStrike(ip, "surge-throttled");
@@ -724,7 +722,7 @@ function requestAccess({ ip, source, label, agentId = null }) {
     };
   }
 
-  trafficGuard.newEntriesThisSecond += 1;
+  trafficGuard.admittedNewEntriesThisSecond += 1;
 
   const token = crypto.randomBytes(16).toString("hex");
   const session = {
@@ -991,10 +989,7 @@ app.listen(PORT, () => {
     ` Capacity cap      : base ${MAX_USERS}, adaptive start ${dynamicCapacityCap}`
   );
   console.log(
-    ` Surge gate        : min ${Math.max(
-      ENTRY_RATE_LIMIT_PER_SECOND,
-      SURGE_GATE_FLOOR
-    )} new entries/s`
+    ` Surge gate        : min ${SURGE_GATE_LIMIT} new entries/s`
   );
   console.log(` Session timeout   : ${USER_TIMEOUT_MS / 1_000}s`);
   console.log(` Simulator pool    : ${SIMULATOR_POOL_SIZE} agents`);

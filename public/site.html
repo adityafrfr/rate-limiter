@@ -115,7 +115,6 @@
           clearInterval(interval);
           handleSessionEnd().catch((error) => {
             console.error("Failed to end session", error);
-            clearInterval(interval);
             countdownEl.textContent = "retry";
             releaseSent = false;
             sessionEnding = false;
