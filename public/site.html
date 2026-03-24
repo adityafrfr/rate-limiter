@@ -78,15 +78,13 @@
       }
     }
 
-    const onPageHide = releaseSession;
-
     async function handleSessionEnd() {
       if (sessionEnding) return;
       releaseError.textContent = "";
       sessionEnding = true;
 
       if (isPagehideListenerActive) {
-        window.removeEventListener("pagehide", onPageHide);
+        window.removeEventListener("pagehide", releaseSession);
         isPagehideListenerActive = false;
       }
 
@@ -106,7 +104,7 @@
     } else {
       tokenDisplay.textContent = token.slice(0, 16) + "...";
 
-      window.addEventListener("pagehide", onPageHide);
+      window.addEventListener("pagehide", releaseSession);
       isPagehideListenerActive = true;
 
       let seconds = 60;
@@ -118,6 +116,7 @@
           handleSessionEnd().catch((error) => {
             console.error("Failed to end session", error);
             clearInterval(interval);
+            countdownEl.textContent = "retry";
             releaseSent = false;
             sessionEnding = false;
             leaveBtn.disabled = false;

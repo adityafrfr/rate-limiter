@@ -22,10 +22,17 @@ const NEW_USER_STDDEV_MULTIPLIER = 2.1;
 const NEW_USER_MIN_ABSOLUTE_DELTA = 2;
 const SURGE_GATE_FLOOR = 10;
 const ONBOARDING_BLOCK_WINDOW_MS = 8_000;
+const ONBOARDING_BLOCK_WINDOW_SECONDS = ONBOARDING_BLOCK_WINDOW_MS / 1_000;
 const DYNAMIC_CAPACITY_FACTOR = 0.35;
 const DYNAMIC_CAPACITY_MAX_MULTIPLIER = 5;
+const DYNAMIC_CAPACITY_FLOOR = MAX_USERS;
+const DYNAMIC_CAPACITY_CEILING = Math.max(
+  Math.ceil(MAX_USERS * DYNAMIC_CAPACITY_MAX_MULTIPLIER),
+  MAX_USERS + 20
+);
 const REPUTATION_STRIKE_LIMIT = 3;
 const REPUTATION_BLOCK_MS = 15_000;
+const REPUTATION_BLOCK_MAX_MS = 60_000;
 const REPUTATION_DECAY_MS = 30_000;
 
 const DEFAULT_SIMULATION_SECONDS = 30;
@@ -35,11 +42,6 @@ const SIMULATOR_TICK_MS = 350;
 const REQUEST_STAGGER_MS = 160;
 const HOLD_RANGE_MS = [7_000, 14_000];
 const COOLDOWN_RANGE_MS = [900, 2_400];
-const MIN_DYNAMIC_CAPACITY = MAX_USERS;
-const MAX_DYNAMIC_CAPACITY = Math.max(
-  Math.ceil(MAX_USERS * DYNAMIC_CAPACITY_MAX_MULTIPLIER),
-  MAX_USERS + 20
-);
 
 let dynamicCapacityCap = MAX_USERS;
 
@@ -148,6 +150,7 @@ function getReputation(ip) {
 
   if (entry.lastStrikeAt && Date.now() - entry.lastStrikeAt > REPUTATION_DECAY_MS) {
     entry.strikes = 0;
+    entry.lastStrikeAt = 0;
   }
 
   ipReputation.set(ip, entry);
@@ -162,7 +165,14 @@ function recordReputationStrike(ip, reason) {
   entry.lastStrikeAt = now;
 
   if (entry.strikes >= REPUTATION_STRIKE_LIMIT) {
-    entry.blockedUntil = Math.max(entry.blockedUntil, now + REPUTATION_BLOCK_MS);
+    const proposedUntil = Math.max(
+      entry.blockedUntil,
+      now + REPUTATION_BLOCK_MS
+    );
+    entry.blockedUntil = Math.min(
+      proposedUntil,
+      now + REPUTATION_BLOCK_MAX_MS
+    );
     entry.strikes = 0;
     logEvent(
       "REPUTATION_BLOCK",
@@ -306,7 +316,7 @@ function finalizeTrafficSecond(rate, newEntryRate, endedAt) {
     if (!alreadyBlocked) {
       logEvent(
         "ONBOARDING_BLOCK",
-        `New-user surge detected at ${newEntryRate}/s (baseline ${trafficGuard.baselineNewEntryRate}/s, threshold ${newEntryThreshold}/s). Onboarding gated for ${Math.round(ONBOARDING_BLOCK_WINDOW_MS / 1_000)}s.`,
+        `New-user surge detected at ${newEntryRate}/s (baseline ${trafficGuard.baselineNewEntryRate}/s, threshold ${newEntryThreshold}/s). Onboarding gated for ${ONBOARDING_BLOCK_WINDOW_SECONDS}s.`,
         {
           rate: newEntryRate,
           baseline: trafficGuard.baselineNewEntryRate,
@@ -318,12 +328,16 @@ function finalizeTrafficSecond(rate, newEntryRate, endedAt) {
 
   const previousCap = dynamicCapacityCap;
   const proposedCap = Math.max(
-    MIN_DYNAMIC_CAPACITY,
+    DYNAMIC_CAPACITY_FLOOR,
     Math.ceil(
       MAX_USERS + trafficGuard.baselineNewEntryRate * DYNAMIC_CAPACITY_FACTOR
     )
   );
-  dynamicCapacityCap = clamp(proposedCap, MIN_DYNAMIC_CAPACITY, MAX_DYNAMIC_CAPACITY);
+  dynamicCapacityCap = clamp(
+    proposedCap,
+    DYNAMIC_CAPACITY_FLOOR,
+    DYNAMIC_CAPACITY_CEILING
+  );
 
   if (dynamicCapacityCap !== previousCap) {
     logEvent(
@@ -641,6 +655,23 @@ function requestAccess({ ip, source, label, agentId = null }) {
     return { allowed: true, token: existing.token, reused: true };
   }
 
+  const reputation = getReputation(ip);
+  if (reputation.blockedUntil > now) {
+    metrics.blockedRequests += 1;
+    metrics.reputationBlocks += 1;
+    logEvent(
+      "REPUTATION_DENY",
+      `${label} (${ip}) suppressed by reputation cooldown.`,
+      { ip, source, reason: "reputation-blocked" }
+    );
+    broadcastSnapshot();
+    return {
+      allowed: false,
+      reason: "reputation-blocked",
+      message: "Source temporarily suppressed after repeated denials.",
+    };
+  }
+
   trafficGuard.newEntryAttemptsThisSecond += 1;
 
   if (isOnboardingBlocked(now)) {
@@ -660,24 +691,6 @@ function requestAccess({ ip, source, label, agentId = null }) {
         "High influx of new users detected. Please retry shortly while onboarding stabilizes.",
     };
   }
-
-  const reputation = getReputation(ip);
-  if (reputation.blockedUntil > now) {
-    metrics.blockedRequests += 1;
-    metrics.reputationBlocks += 1;
-    logEvent(
-      "REPUTATION_DENY",
-      `${label} (${ip}) suppressed by reputation cooldown.`,
-      { ip, source, reason: "reputation-blocked" }
-    );
-    broadcastSnapshot();
-    return {
-      allowed: false,
-      reason: "reputation-blocked",
-      message: "Source temporarily suppressed after repeated denials.",
-    };
-  }
-
   const surgeGateLimit = Math.max(ENTRY_RATE_LIMIT_PER_SECOND, SURGE_GATE_FLOOR);
   if (isSurgeMode(now) && trafficGuard.newEntriesThisSecond >= surgeGateLimit) {
     metrics.blockedRequests += 1;

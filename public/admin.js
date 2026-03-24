@@ -156,7 +156,11 @@ function renderSnapshot(snapshot) {
     : snapshot.traffic.surgeMode
       ? "Surge"
       : "Stable";
-  capacityText.textContent = `Req ${observedRate}/s (baseline ${snapshot.traffic.baselineRate}/s, threshold ${snapshot.traffic.thresholdRate}/s). New users ${observedNewRate}/s (baseline ${snapshot.traffic.baselineNewEntryRate}/s, threshold ${snapshot.traffic.thresholdNewEntryRate}/s). Dynamic cap ${snapshot.dynamicCapacity} (base ${snapshot.baseCapacity}).`;
+  capacityText.textContent = [
+    `Req ${observedRate}/s (baseline ${snapshot.traffic.baselineRate}/s, threshold ${snapshot.traffic.thresholdRate}/s).`,
+    `New users ${observedNewRate}/s (baseline ${snapshot.traffic.baselineNewEntryRate}/s, threshold ${snapshot.traffic.thresholdNewEntryRate}/s).`,
+    `Dynamic cap ${snapshot.dynamicCapacity} (base ${snapshot.baseCapacity}).`,
+  ].join(" ");
   setMeter(
     capacityFill,
     Math.max(observedRate, observedNewRate),
