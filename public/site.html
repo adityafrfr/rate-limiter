@@ -85,6 +85,8 @@
     } else {
       tokenDisplay.textContent = token.slice(0, 16) + "...";
 
+      window.addEventListener("pagehide", releaseSession);
+
       let seconds = 60;
       const interval = setInterval(() => {
         seconds--;
@@ -99,8 +101,6 @@
           })();
         }
       }, 1000);
-
-      window.addEventListener("pagehide", releaseSession);
 
       leaveBtn.addEventListener("click", async () => {
         leaveBtn.disabled = true;
