@@ -45,6 +45,28 @@
     const tokenDisplay = document.getElementById("token-display");
     const countdownEl = document.getElementById("countdown");
     const leaveBtn = document.getElementById("leave-btn");
+    let releaseSent = false;
+
+    async function releaseSession() {
+      if (releaseSent || !token) return;
+      releaseSent = true;
+
+      const payload = JSON.stringify({ token });
+
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon("/api/leave", new Blob([payload], { type: "application/json" }));
+        return;
+      }
+
+      try {
+        await fetch("/api/leave", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: payload,
+        });
+      } catch {
+      }
+    }
 
 
     if (!token) {
@@ -63,6 +85,7 @@
         countdownEl.textContent = seconds;
         if (seconds <= 0) {
           clearInterval(interval);
+          releaseSession();
           sessionStorage.removeItem("gateway-token");
           window.location.href = "index.html";
         }
@@ -72,18 +95,13 @@
         leaveBtn.disabled = true;
         clearInterval(interval);
 
-        try {
-          await fetch("/api/leave", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token }),
-          });
-        } catch {
-        }
+        await releaseSession();
 
         sessionStorage.removeItem("gateway-token");
         window.location.href = "index.html";
       });
+
+      window.addEventListener("pagehide", releaseSession);
     }
   </script>
 </body>
