@@ -34,6 +34,7 @@
       <p><strong>Session Token:</strong> <span id="token-display">—</span></p>
       <p><strong>Time Remaining:</strong> <span id="countdown">60</span>s</p>
     </div>
+    <p id="release-error" class="muted-copy" role="status" aria-live="polite"></p>
 
     <button id="leave-btn" class="btn btn-danger">
       &#128682; Leave &amp; Free My Slot
@@ -45,6 +46,55 @@
     const tokenDisplay = document.getElementById("token-display");
     const countdownEl = document.getElementById("countdown");
     const leaveBtn = document.getElementById("leave-btn");
+    const releaseError = document.getElementById("release-error");
+    let releaseSent = false;
+    let sessionEnding = false;
+    let isPagehideListenerActive = false;
+
+    async function releaseSession() {
+      if (releaseSent || !token) return;
+      releaseSent = true;
+
+      const payload = JSON.stringify({ token });
+
+      let sent = false;
+      if (navigator.sendBeacon) {
+        sent = navigator.sendBeacon(
+          "/api/leave",
+          new Blob([payload], { type: "application/json" })
+        );
+        if (!sent) {
+          console.warn("sendBeacon failed; falling back to fetch.");
+        }
+      }
+
+      if (!sent) {
+        try {
+          await fetch("/api/leave", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: payload,
+          });
+        } catch (error) {
+          console.error("Failed to release session", error);
+        }
+      }
+    }
+
+    async function handleSessionEnd() {
+      if (sessionEnding) return;
+      releaseError.textContent = "";
+      sessionEnding = true;
+
+      if (isPagehideListenerActive) {
+        window.removeEventListener("pagehide", releaseSession);
+        isPagehideListenerActive = false;
+      }
+
+      await releaseSession();
+      sessionStorage.removeItem("gateway-token");
+      window.location.href = "index.html";
+    }
 
 
     if (!token) {
@@ -57,14 +107,24 @@
     } else {
       tokenDisplay.textContent = token.slice(0, 16) + "...";
 
+      window.addEventListener("pagehide", releaseSession);
+      isPagehideListenerActive = true;
+
       let seconds = 60;
       const interval = setInterval(() => {
         seconds--;
         countdownEl.textContent = seconds;
         if (seconds <= 0) {
           clearInterval(interval);
-          sessionStorage.removeItem("gateway-token");
-          window.location.href = "index.html";
+          handleSessionEnd().catch((error) => {
+            console.error("Failed to end session", error);
+            countdownEl.textContent = "retry";
+            releaseSent = false;
+            sessionEnding = false;
+            leaveBtn.disabled = false;
+            releaseError.textContent =
+              "We couldn't confirm release. Click Leave to retry.";
+          });
         }
       }, 1000);
 
@@ -72,17 +132,7 @@
         leaveBtn.disabled = true;
         clearInterval(interval);
 
-        try {
-          await fetch("/api/leave", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token }),
-          });
-        } catch {
-        }
-
-        sessionStorage.removeItem("gateway-token");
-        window.location.href = "index.html";
+        await handleSessionEnd();
       });
     }
   </script>

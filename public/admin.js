@@ -141,30 +141,47 @@ function renderSnapshot(snapshot) {
     snapshot.traffic.liveRate,
     snapshot.traffic.lastSecondRate
   );
+  const observedNewRate = Math.max(
+    snapshot.traffic.liveNewEntryRate,
+    snapshot.traffic.lastSecondNewEntryRate
+  );
 
-  metricCapacity.textContent = `${snapshot.activeUsers} / ${snapshot.maxUsers}`;
+  metricCapacity.textContent = `${snapshot.activeUsers} / ${snapshot.dynamicCapacity}`;
   metricBlockRate.textContent = `${snapshot.metrics.blockRate}%`;
   metricPool.textContent = `${snapshot.simulator.busyAgents} / ${snapshot.simulator.poolSize}`;
   metricParallel.textContent = `${snapshot.traffic.allowedPerSecond}/s`;
 
-  capacityCaption.textContent =
-    snapshot.traffic.surgeMode ? "Surge" : "Stable";
-  capacityText.textContent = `Observed rate ${observedRate}/s, baseline ${snapshot.traffic.baselineRate}/s, threshold ${snapshot.traffic.thresholdRate}/s.`;
+  capacityCaption.textContent = snapshot.traffic.onboardingBlocked
+    ? "New-user gated"
+    : snapshot.traffic.surgeMode
+      ? "Surge"
+      : "Stable";
+  capacityText.textContent = [
+    `Req ${observedRate}/s (baseline ${snapshot.traffic.baselineRate}/s, threshold ${snapshot.traffic.thresholdRate}/s).`,
+    `New users ${observedNewRate}/s (baseline ${snapshot.traffic.baselineNewEntryRate}/s, threshold ${snapshot.traffic.thresholdNewEntryRate}/s).`,
+    `Dynamic cap ${snapshot.dynamicCapacity} (base ${snapshot.baseCapacity}).`,
+  ].join(" ");
   setMeter(
     capacityFill,
-    observedRate,
-    Math.max(snapshot.traffic.thresholdRate, snapshot.traffic.allowedPerSecond)
+    Math.max(observedRate, observedNewRate),
+    Math.max(
+      snapshot.traffic.thresholdRate,
+      snapshot.traffic.thresholdNewEntryRate,
+      snapshot.traffic.allowedPerSecond
+    )
   );
 
   poolCaption.textContent = snapshot.simulator.running ? "Running" : "Idle";
   poolText.textContent = `${snapshot.simulator.recycled} agents have completed a recycle loop.`;
   setMeter(poolFill, snapshot.simulator.busyAgents, snapshot.simulator.poolSize);
 
-  controlStatus.textContent = snapshot.traffic.surgeMode
-    ? `Surge guard active. New entries are limited to ${snapshot.traffic.allowedPerSecond}/s for about ${snapshot.traffic.cooldownSeconds}s.`
-    : snapshot.simulator.running
-      ? `Simulator running for ${snapshot.simulator.elapsedSeconds}s of ${snapshot.simulator.durationSeconds}s.`
-      : "The simulator is local-only and capped at 150% of site capacity.";
+  controlStatus.textContent = snapshot.traffic.onboardingBlocked
+    ? `Onboarding surge guard active for about ${snapshot.traffic.onboardingBlockSeconds}s.`
+    : snapshot.traffic.surgeMode
+      ? `Surge guard active. New entries are limited to ${snapshot.traffic.allowedPerSecond}/s for about ${snapshot.traffic.cooldownSeconds}s.`
+      : snapshot.simulator.running
+        ? `Simulator running for ${snapshot.simulator.elapsedSeconds}s of ${snapshot.simulator.durationSeconds}s.`
+        : "The simulator is local-only and capped at 150% of site capacity.";
 
   startButton.disabled = snapshot.simulator.running;
   stopButton.disabled = !snapshot.simulator.running;

@@ -28,10 +28,7 @@ enterBtn.addEventListener("click", async () => {
       return;
     }
 
-    statusMsg.textContent =
-      data.reason === "surge-throttled"
-        ? data.message
-        : "Capacity is full. Redirecting...";
+    statusMsg.textContent = data.message || "Capacity is full. Redirecting...";
     statusMsg.classList.add("error");
     setTimeout(() => {
       window.location.href = `blocked.html?reason=${encodeURIComponent(
@@ -91,14 +88,16 @@ async function refreshStatus() {
     const data = await response.json();
     window.gatewaySnapshot = data;
 
-    summaryActive.textContent = `${data.activeUsers} / ${data.maxUsers}`;
+    summaryActive.textContent = `${data.activeUsers} / ${data.dynamicCapacity}`;
     summaryBlockRate.textContent = `${data.metrics.blockRate}%`;
     summaryPool.textContent = `${data.simulator.busyAgents} / ${data.simulator.poolSize}`;
     summaryMode.textContent = data.traffic.surgeMode
       ? "Surge guard"
-      : data.simulator.running
-        ? "Sim running"
-        : "Normal";
+      : data.traffic.onboardingBlocked
+        ? "New-user gated"
+        : data.simulator.running
+          ? "Sim running"
+          : "Normal";
 
     adminStats.innerHTML = renderSessionsTable(data.sessions);
   } catch (_error) {
