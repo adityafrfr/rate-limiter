@@ -34,6 +34,7 @@
       <p><strong>Session Token:</strong> <span id="token-display">—</span></p>
       <p><strong>Time Remaining:</strong> <span id="countdown">60</span>s</p>
     </div>
+    <p id="release-error" class="muted-copy" role="status"></p>
 
     <button id="leave-btn" class="btn btn-danger">
       &#128682; Leave &amp; Free My Slot
@@ -45,6 +46,7 @@
     const tokenDisplay = document.getElementById("token-display");
     const countdownEl = document.getElementById("countdown");
     const leaveBtn = document.getElementById("leave-btn");
+    const releaseError = document.getElementById("release-error");
     let releaseSent = false;
     let sessionEnding = false;
     let isPagehideListenerActive = false;
@@ -82,6 +84,7 @@
 
     async function handleSessionEnd() {
       if (sessionEnding) return;
+      releaseError.textContent = "";
       sessionEnding = true;
 
       if (isPagehideListenerActive) {
@@ -114,9 +117,14 @@
         countdownEl.textContent = seconds;
         if (seconds <= 0) {
           clearInterval(interval);
-          handleSessionEnd().catch((error) =>
-            console.error("Failed to end session", error)
-          );
+          handleSessionEnd().catch((error) => {
+            console.error("Failed to end session", error);
+            releaseSent = false;
+            sessionEnding = false;
+            leaveBtn.disabled = false;
+            releaseError.textContent =
+              "We couldn't confirm release. Click Leave to retry.";
+          });
         }
       }, 1000);
 

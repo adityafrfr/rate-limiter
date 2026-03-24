@@ -157,10 +157,6 @@ function recordReputationStrike(ip, reason) {
   const now = Date.now();
   const entry = getReputation(ip);
 
-  if (entry.lastStrikeAt && now - entry.lastStrikeAt > REPUTATION_DECAY_MS) {
-    entry.strikes = 0;
-  }
-
   entry.strikes += 1;
   entry.lastStrikeAt = now;
 
@@ -661,9 +657,8 @@ function requestAccess({ ip, source, label, agentId = null }) {
     };
   }
 
-  trafficGuard.newEntriesThisSecond += 1;
-
   if (isOnboardingBlocked(now)) {
+    trafficGuard.newEntriesThisSecond += 1;
     metrics.blockedRequests += 1;
     metrics.onboardingBlocks += 1;
     recordReputationStrike(ip, "onboarding-blocked");
@@ -682,7 +677,8 @@ function requestAccess({ ip, source, label, agentId = null }) {
   }
 
   const surgeGateLimit = Math.max(ENTRY_RATE_LIMIT_PER_SECOND, MIN_SURGE_ENTRY_RATE);
-  if (isSurgeMode(now) && trafficGuard.newEntriesThisSecond > surgeGateLimit) {
+  if (isSurgeMode(now) && trafficGuard.newEntriesThisSecond >= surgeGateLimit) {
+    trafficGuard.newEntriesThisSecond += 1;
     metrics.blockedRequests += 1;
     metrics.throttledRequests += 1;
     recordReputationStrike(ip, "surge-throttled");
@@ -698,6 +694,8 @@ function requestAccess({ ip, source, label, agentId = null }) {
       message: `Traffic spike detected. New entries are temporarily limited to ${surgeGateLimit}/s.`,
     };
   }
+
+  trafficGuard.newEntriesThisSecond += 1;
 
   if (activeUsers.size >= dynamicCapacityCap) {
     metrics.blockedRequests += 1;
