@@ -18,6 +18,12 @@ const RATE_BASELINE_WINDOW_SECONDS = 12;
 const SURGE_STDDEV_MULTIPLIER = 1.8;
 const SURGE_MIN_ABSOLUTE_DELTA = 3;
 const SURGE_COOLDOWN_MS = 10_000;
+const NEW_USER_STDDEV_MULTIPLIER = 2.1;
+const NEW_USER_MIN_ABSOLUTE_DELTA = 2;
+const MIN_SURGE_ENTRY_RATE = 10;
+const ONBOARDING_BLOCK_WINDOW_MS = 8_000;
+const DYNAMIC_CAPACITY_FACTOR = 0.35;
+const DYNAMIC_CAPACITY_MAX_MULTIPLIER = 5;
 
 const DEFAULT_SIMULATION_SECONDS = 30;
 const SIMULATOR_POOL_SIZE = Math.max(MAX_USERS, Math.ceil(MAX_USERS * 1.5));
@@ -26,6 +32,13 @@ const SIMULATOR_TICK_MS = 350;
 const REQUEST_STAGGER_MS = 160;
 const HOLD_RANGE_MS = [7_000, 14_000];
 const COOLDOWN_RANGE_MS = [900, 2_400];
+const MIN_DYNAMIC_CAPACITY = MAX_USERS;
+const MAX_DYNAMIC_CAPACITY = Math.max(
+  Math.ceil(MAX_USERS * DYNAMIC_CAPACITY_MAX_MULTIPLIER),
+  MAX_USERS + 20
+);
+
+let dynamicCapacityCap = MAX_USERS;
 
 const activeUsers = new Map();
 const dashboardClients = new Set();
@@ -36,6 +49,7 @@ const metrics = {
   allowedRequests: 0,
   blockedRequests: 0,
   throttledRequests: 0,
+  onboardingBlocks: 0,
   releasedSessions: 0,
   expiredSessions: 0,
   peakActiveUsers: 0,
@@ -82,12 +96,22 @@ const trafficGuard = {
     { length: RATE_BASELINE_WINDOW_SECONDS },
     () => 0
   ),
+  recentNewEntries: Array.from(
+    { length: RATE_BASELINE_WINDOW_SECONDS },
+    () => 0
+  ),
   currentRate: 0,
   baselineRate: 0,
   deviationRate: 0,
   thresholdRate: SURGE_MIN_ABSOLUTE_DELTA,
+  currentNewEntryRate: 0,
+  baselineNewEntryRate: 0,
+  deviationNewEntryRate: 0,
+  thresholdNewEntryRate: NEW_USER_MIN_ABSOLUTE_DELTA,
   surgeModeUntil: 0,
   wasInSurgeMode: false,
+  onboardingBlockUntil: 0,
+  wasOnboardingBlocked: false,
 };
 
 app.use(express.json());
@@ -146,6 +170,23 @@ function isSurgeMode(now = Date.now()) {
   return trafficGuard.surgeModeUntil > now;
 }
 
+function isOnboardingBlocked(now = Date.now()) {
+  return trafficGuard.onboardingBlockUntil > now;
+}
+
+function syncOnboardingGate(now = Date.now()) {
+  const blocked = isOnboardingBlocked(now);
+
+  if (trafficGuard.wasOnboardingBlocked && !blocked) {
+    logEvent(
+      "ONBOARDING_CLEAR",
+      "New-user surge guard relaxed; onboarding reopened."
+    );
+  }
+
+  trafficGuard.wasOnboardingBlocked = blocked;
+}
+
 function syncSurgeMode(now = Date.now()) {
   const surgeActive = isSurgeMode(now);
 
@@ -159,7 +200,7 @@ function syncSurgeMode(now = Date.now()) {
   trafficGuard.wasInSurgeMode = surgeActive;
 }
 
-function finalizeTrafficSecond(rate, endedAt) {
+function finalizeTrafficSecond(rate, newEntryRate, endedAt) {
   const reference = trafficGuard.recentRates.slice(
     -RATE_BASELINE_WINDOW_SECONDS
   );
@@ -178,6 +219,24 @@ function finalizeTrafficSecond(rate, endedAt) {
   trafficGuard.deviationRate = roundToTenth(stats.stddev);
   trafficGuard.thresholdRate = threshold;
 
+  const newRef = trafficGuard.recentNewEntries.slice(
+    -RATE_BASELINE_WINDOW_SECONDS
+  );
+  const newStats = summarizeRates(newRef);
+  const newEntryThreshold = Math.max(
+    NEW_USER_MIN_ABSOLUTE_DELTA,
+    Math.ceil(
+      newStats.mean +
+        newStats.stddev * NEW_USER_STDDEV_MULTIPLIER +
+        NEW_USER_MIN_ABSOLUTE_DELTA
+    )
+  );
+
+  trafficGuard.currentNewEntryRate = newEntryRate;
+  trafficGuard.baselineNewEntryRate = roundToTenth(newStats.mean);
+  trafficGuard.deviationNewEntryRate = roundToTenth(newStats.stddev);
+  trafficGuard.thresholdNewEntryRate = newEntryThreshold;
+
   if (rate > threshold) {
     const alreadyActive = isSurgeMode(endedAt);
     trafficGuard.surgeModeUntil = Math.max(
@@ -188,7 +247,10 @@ function finalizeTrafficSecond(rate, endedAt) {
     if (!alreadyActive) {
       logEvent(
         "SURGE",
-        `Entry rate jumped to ${rate}/s. New entries are capped at ${ENTRY_RATE_LIMIT_PER_SECOND}/s.`,
+        `Entry rate jumped to ${rate}/s. New entries are capped at ${Math.max(
+          ENTRY_RATE_LIMIT_PER_SECOND,
+          MIN_SURGE_ENTRY_RATE
+        )}/s.`,
         {
           rate,
           baseline: trafficGuard.baselineRate,
@@ -198,9 +260,54 @@ function finalizeTrafficSecond(rate, endedAt) {
     }
   }
 
+  if (newEntryRate > newEntryThreshold) {
+    const alreadyBlocked = isOnboardingBlocked(endedAt);
+    trafficGuard.onboardingBlockUntil = Math.max(
+      trafficGuard.onboardingBlockUntil,
+      endedAt + ONBOARDING_BLOCK_WINDOW_MS
+    );
+
+    if (!alreadyBlocked) {
+      logEvent(
+        "ONBOARDING_BLOCK",
+        `New-user surge detected at ${newEntryRate}/s (baseline ${trafficGuard.baselineNewEntryRate}/s, threshold ${newEntryThreshold}/s). Onboarding gated for ${Math.round(ONBOARDING_BLOCK_WINDOW_MS / 1_000)}s.`,
+        {
+          rate: newEntryRate,
+          baseline: trafficGuard.baselineNewEntryRate,
+          threshold: newEntryThreshold,
+        }
+      );
+    }
+  }
+
+  const previousCap = dynamicCapacityCap;
+  const proposedCap = Math.max(
+    MIN_DYNAMIC_CAPACITY,
+    Math.ceil(
+      MAX_USERS + trafficGuard.baselineNewEntryRate * DYNAMIC_CAPACITY_FACTOR
+    )
+  );
+  dynamicCapacityCap = clamp(proposedCap, MIN_DYNAMIC_CAPACITY, MAX_DYNAMIC_CAPACITY);
+
+  if (dynamicCapacityCap !== previousCap) {
+    logEvent(
+      "CAP_ADAPT",
+      `Dynamic capacity adjusted to ${dynamicCapacityCap} (baseline new users ${trafficGuard.baselineNewEntryRate}/s).`,
+      {
+        from: previousCap,
+        to: dynamicCapacityCap,
+      }
+    );
+  }
+
   trafficGuard.recentRates.push(rate);
   if (trafficGuard.recentRates.length > HISTORY_LIMIT) {
     trafficGuard.recentRates.shift();
+  }
+
+  trafficGuard.recentNewEntries.push(newEntryRate);
+  if (trafficGuard.recentNewEntries.length > HISTORY_LIMIT) {
+    trafficGuard.recentNewEntries.shift();
   }
 
   syncSurgeMode(endedAt);
@@ -210,6 +317,7 @@ function rollTrafficWindow(now = Date.now()) {
   while (now - trafficGuard.secondWindowStartedAt >= SAMPLE_INTERVAL_MS) {
     finalizeTrafficSecond(
       trafficGuard.requestsThisSecond,
+      trafficGuard.newEntriesThisSecond,
       trafficGuard.secondWindowStartedAt + SAMPLE_INTERVAL_MS
     );
     trafficGuard.secondWindowStartedAt += SAMPLE_INTERVAL_MS;
@@ -218,6 +326,7 @@ function rollTrafficWindow(now = Date.now()) {
   }
 
   syncSurgeMode(now);
+  syncOnboardingGate(now);
 }
 
 function isLocalRequest(req) {
@@ -292,6 +401,7 @@ function buildSessions() {
 function buildSnapshot() {
   rollTrafficWindow(Date.now());
 
+  const surgeGateLimit = Math.max(ENTRY_RATE_LIMIT_PER_SECOND, MIN_SURGE_ENTRY_RATE);
   const blockRate =
     metrics.totalRequests === 0
       ? 0
@@ -300,7 +410,9 @@ function buildSnapshot() {
 
   return {
     activeUsers: activeUsers.size,
-    maxUsers: MAX_USERS,
+    maxUsers: dynamicCapacityCap,
+    baseCapacity: MAX_USERS,
+    dynamicCapacity: dynamicCapacityCap,
     timeoutSeconds: Math.round(USER_TIMEOUT_MS / 1_000),
     sessions: buildSessions(),
     metrics: {
@@ -308,6 +420,7 @@ function buildSnapshot() {
       allowedRequests: metrics.allowedRequests,
       blockedRequests: metrics.blockedRequests,
       throttledRequests: metrics.throttledRequests,
+      onboardingBlocks: metrics.onboardingBlocks,
       releasedSessions: metrics.releasedSessions,
       expiredSessions: metrics.expiredSessions,
       peakActiveUsers: metrics.peakActiveUsers,
@@ -331,22 +444,34 @@ function buildSnapshot() {
     },
     traffic: {
       surgeMode,
-      allowedPerSecond: ENTRY_RATE_LIMIT_PER_SECOND,
+      onboardingBlocked: isOnboardingBlocked(),
+      allowedPerSecond: surgeGateLimit,
       liveRate: trafficGuard.requestsThisSecond,
       lastSecondRate: trafficGuard.currentRate,
       baselineRate: trafficGuard.baselineRate,
       deviationRate: trafficGuard.deviationRate,
       thresholdRate: trafficGuard.thresholdRate,
+      liveNewEntryRate: trafficGuard.newEntriesThisSecond,
+      lastSecondNewEntryRate: trafficGuard.currentNewEntryRate,
+      baselineNewEntryRate: trafficGuard.baselineNewEntryRate,
+      deviationNewEntryRate: trafficGuard.deviationNewEntryRate,
+      thresholdNewEntryRate: trafficGuard.thresholdNewEntryRate,
       gateRemainingThisSecond: surgeMode
         ? Math.max(
             0,
-            ENTRY_RATE_LIMIT_PER_SECOND - trafficGuard.newEntriesThisSecond
+            surgeGateLimit - trafficGuard.newEntriesThisSecond
           )
-        : ENTRY_RATE_LIMIT_PER_SECOND,
+        : surgeGateLimit,
       cooldownSeconds: surgeMode
         ? Math.max(
             0,
             Math.ceil((trafficGuard.surgeModeUntil - Date.now()) / 1_000)
+          )
+        : 0,
+      onboardingBlockSeconds: isOnboardingBlocked()
+        ? Math.max(
+            0,
+            Math.ceil((trafficGuard.onboardingBlockUntil - Date.now()) / 1_000)
           )
         : 0,
     },
@@ -373,12 +498,16 @@ function captureSample() {
   metrics.history.push({
     time: Date.now(),
     activeUsers: activeUsers.size,
+    dynamicCapacity: dynamicCapacityCap,
     simulatorBusy: getBusyAgentCount(),
     totalRequests: metrics.totalRequests,
     blockedRequests: metrics.blockedRequests,
     requestRate: trafficGuard.currentRate,
     thresholdRate: trafficGuard.thresholdRate,
+    newEntryRate: trafficGuard.currentNewEntryRate,
+    newEntryThreshold: trafficGuard.thresholdNewEntryRate,
     surgeMode: isSurgeMode(),
+    onboardingBlocked: isOnboardingBlocked(),
   });
 
   if (metrics.history.length > HISTORY_LIMIT) {
@@ -473,33 +602,48 @@ function requestAccess({ ip, source, label, agentId = null }) {
     return { allowed: true, token: existing.token, reused: true };
   }
 
-  if (
-    isSurgeMode(now) &&
-    trafficGuard.newEntriesThisSecond >= ENTRY_RATE_LIMIT_PER_SECOND
-  ) {
+  trafficGuard.newEntriesThisSecond += 1;
+
+  if (isOnboardingBlocked(now)) {
+    metrics.blockedRequests += 1;
+    metrics.onboardingBlocks += 1;
+    logEvent(
+      "BLOCKED_NEW",
+      `${label} (${ip}) blocked due to new-user surge guard.`,
+      { ip, source, reason: "onboarding-blocked" }
+    );
+    broadcastSnapshot();
+    return {
+      allowed: false,
+      reason: "onboarding-blocked",
+      message:
+        "High influx of new users detected. Please retry shortly while onboarding stabilizes.",
+    };
+  }
+
+  const surgeGateLimit = Math.max(ENTRY_RATE_LIMIT_PER_SECOND, MIN_SURGE_ENTRY_RATE);
+  if (isSurgeMode(now) && trafficGuard.newEntriesThisSecond > surgeGateLimit) {
     metrics.blockedRequests += 1;
     metrics.throttledRequests += 1;
     logEvent(
       "THROTTLED",
-      `${label} (${ip}) was held at the surge gate after ${ENTRY_RATE_LIMIT_PER_SECOND} new entries in the current second.`,
+      `${label} (${ip}) was held at the surge gate after ${surgeGateLimit} new entries in the current second.`,
       { ip, source, reason: "surge-throttled" }
     );
     broadcastSnapshot();
     return {
       allowed: false,
       reason: "surge-throttled",
-      message: `Traffic spike detected. New entries are temporarily limited to ${ENTRY_RATE_LIMIT_PER_SECOND}/s.`,
+      message: `Traffic spike detected. New entries are temporarily limited to ${surgeGateLimit}/s.`,
     };
   }
 
-  trafficGuard.newEntriesThisSecond += 1;
-
-  if (activeUsers.size >= MAX_USERS) {
+  if (activeUsers.size >= dynamicCapacityCap) {
     metrics.blockedRequests += 1;
     logEvent(
       "BLOCKED",
-      `${label} (${ip}) was denied at ${activeUsers.size}/${MAX_USERS}.`,
-      { ip, source }
+      `${label} (${ip}) was denied at ${activeUsers.size}/${dynamicCapacityCap}.`,
+      { ip, source, cap: dynamicCapacityCap }
     );
     broadcastSnapshot();
     return {
@@ -770,8 +914,15 @@ app.listen(PORT, () => {
   console.log("==============================================");
   console.log(` Visitor page      : http://localhost:${PORT}`);
   console.log(` Admin dashboard   : http://localhost:${PORT}/admin.html`);
-  console.log(` Capacity cap      : ${MAX_USERS} active sessions`);
-  console.log(` Surge gate        : ${ENTRY_RATE_LIMIT_PER_SECOND} new entries/s`);
+  console.log(
+    ` Capacity cap      : base ${MAX_USERS}, adaptive start ${dynamicCapacityCap}`
+  );
+  console.log(
+    ` Surge gate        : min ${Math.max(
+      ENTRY_RATE_LIMIT_PER_SECOND,
+      MIN_SURGE_ENTRY_RATE
+    )} new entries/s`
+  );
   console.log(` Session timeout   : ${USER_TIMEOUT_MS / 1_000}s`);
   console.log(` Simulator pool    : ${SIMULATOR_POOL_SIZE} agents`);
   console.log(` Parallel attempts : ${SIMULATOR_PARALLEL_LIMIT}`);
