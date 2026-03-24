@@ -75,8 +75,8 @@
     }
 
     async function handleSessionEnd() {
-      window.removeEventListener("pagehide", releaseSession);
       await releaseSession();
+      window.removeEventListener("pagehide", releaseSession);
       sessionStorage.removeItem("gateway-token");
       window.location.href = "index.html";
     }
@@ -95,12 +95,14 @@
       window.addEventListener("pagehide", releaseSession);
 
       let seconds = 60;
-      const interval = setInterval(async () => {
+      const interval = setInterval(() => {
         seconds--;
         countdownEl.textContent = seconds;
         if (seconds <= 0) {
           clearInterval(interval);
-          await handleSessionEnd();
+          handleSessionEnd().catch((error) =>
+            console.error("Failed to end session", error)
+          );
         }
       }, 1000);
 
