@@ -78,9 +78,7 @@
       }
     }
 
-    const onPageHide = () => {
-      releaseSession();
-    };
+    const onPageHide = releaseSession;
 
     async function handleSessionEnd() {
       if (sessionEnding) return;

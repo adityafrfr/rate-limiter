@@ -20,7 +20,7 @@ const SURGE_MIN_ABSOLUTE_DELTA = 3;
 const SURGE_COOLDOWN_MS = 10_000;
 const NEW_USER_STDDEV_MULTIPLIER = 2.1;
 const NEW_USER_MIN_ABSOLUTE_DELTA = 2;
-const MIN_SURGE_ENTRY_RATE = 10;
+const SURGE_GATE_FLOOR = 10;
 const ONBOARDING_BLOCK_WINDOW_MS = 8_000;
 const DYNAMIC_CAPACITY_FACTOR = 0.35;
 const DYNAMIC_CAPACITY_MAX_MULTIPLIER = 5;
@@ -263,9 +263,7 @@ function finalizeTrafficSecond(rate, newEntryRate, endedAt) {
   const newEntryThreshold = Math.max(
     NEW_USER_MIN_ABSOLUTE_DELTA,
     Math.ceil(
-      newStats.mean +
-        newStats.stddev * NEW_USER_STDDEV_MULTIPLIER +
-        NEW_USER_MIN_ABSOLUTE_DELTA
+      newStats.mean + newStats.stddev * NEW_USER_STDDEV_MULTIPLIER
     )
   );
 
@@ -286,7 +284,7 @@ function finalizeTrafficSecond(rate, newEntryRate, endedAt) {
         "SURGE",
         `Entry rate jumped to ${rate}/s. New entries are capped at ${Math.max(
           ENTRY_RATE_LIMIT_PER_SECOND,
-          MIN_SURGE_ENTRY_RATE
+          SURGE_GATE_FLOOR
         )}/s.`,
         {
           rate,
@@ -438,7 +436,7 @@ function buildSessions() {
 function buildSnapshot() {
   rollTrafficWindow(Date.now());
 
-  const surgeGateLimit = Math.max(ENTRY_RATE_LIMIT_PER_SECOND, MIN_SURGE_ENTRY_RATE);
+  const surgeGateLimit = Math.max(ENTRY_RATE_LIMIT_PER_SECOND, SURGE_GATE_FLOOR);
   const blockRate =
     metrics.totalRequests === 0
       ? 0
@@ -658,7 +656,6 @@ function requestAccess({ ip, source, label, agentId = null }) {
   }
 
   if (isOnboardingBlocked(now)) {
-    trafficGuard.newEntriesThisSecond += 1;
     metrics.blockedRequests += 1;
     metrics.onboardingBlocks += 1;
     recordReputationStrike(ip, "onboarding-blocked");
@@ -676,9 +673,8 @@ function requestAccess({ ip, source, label, agentId = null }) {
     };
   }
 
-  const surgeGateLimit = Math.max(ENTRY_RATE_LIMIT_PER_SECOND, MIN_SURGE_ENTRY_RATE);
+  const surgeGateLimit = Math.max(ENTRY_RATE_LIMIT_PER_SECOND, SURGE_GATE_FLOOR);
   if (isSurgeMode(now) && trafficGuard.newEntriesThisSecond >= surgeGateLimit) {
-    trafficGuard.newEntriesThisSecond += 1;
     metrics.blockedRequests += 1;
     metrics.throttledRequests += 1;
     recordReputationStrike(ip, "surge-throttled");
@@ -695,8 +691,6 @@ function requestAccess({ ip, source, label, agentId = null }) {
     };
   }
 
-  trafficGuard.newEntriesThisSecond += 1;
-
   if (activeUsers.size >= dynamicCapacityCap) {
     metrics.blockedRequests += 1;
     logEvent(
@@ -711,6 +705,8 @@ function requestAccess({ ip, source, label, agentId = null }) {
       message: "Capacity is full right now.",
     };
   }
+
+  trafficGuard.newEntriesThisSecond += 1;
 
   const token = crypto.randomBytes(16).toString("hex");
   const session = {
@@ -979,7 +975,7 @@ app.listen(PORT, () => {
   console.log(
     ` Surge gate        : min ${Math.max(
       ENTRY_RATE_LIMIT_PER_SECOND,
-      MIN_SURGE_ENTRY_RATE
+      SURGE_GATE_FLOOR
     )} new entries/s`
   );
   console.log(` Session timeout   : ${USER_TIMEOUT_MS / 1_000}s`);
