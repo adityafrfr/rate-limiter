@@ -34,7 +34,7 @@
       <p><strong>Session Token:</strong> <span id="token-display">—</span></p>
       <p><strong>Time Remaining:</strong> <span id="countdown">60</span>s</p>
     </div>
-    <p id="release-error" class="muted-copy" role="status"></p>
+    <p id="release-error" class="muted-copy" role="status" aria-live="polite"></p>
 
     <button id="leave-btn" class="btn btn-danger">
       &#128682; Leave &amp; Free My Slot
@@ -63,6 +63,9 @@
           "/api/leave",
           new Blob([payload], { type: "application/json" })
         );
+        if (!sent) {
+          console.warn("sendBeacon failed; falling back to fetch.");
+        }
       }
 
       if (!sent) {

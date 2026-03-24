@@ -145,9 +145,12 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function createReputationEntry() {
+  return { strikes: 0, blockedUntil: 0, lastStrikeAt: 0 };
+}
+
 function getReputation(ip) {
-  const entry =
-    ipReputation.get(ip) || { strikes: 0, blockedUntil: 0, lastStrikeAt: 0 };
+  const entry = ipReputation.get(ip) || createReputationEntry();
 
   if (entry.lastStrikeAt && Date.now() - entry.lastStrikeAt > REPUTATION_DECAY_MS) {
     entry.strikes = 0;
@@ -675,7 +678,6 @@ function requestAccess({ ip, source, label, agentId = null }) {
   if (isOnboardingBlocked(now)) {
     metrics.blockedRequests += 1;
     metrics.onboardingBlocks += 1;
-    recordReputationStrike(ip, "onboarding-blocked");
     logEvent(
       "BLOCKED_NEW",
       `${label} (${ip}) blocked due to new-user surge guard.`,
@@ -989,7 +991,7 @@ app.listen(PORT, () => {
     ` Capacity cap      : base ${MAX_USERS}, adaptive start ${dynamicCapacityCap}`
   );
   console.log(
-    ` Surge gate        : min ${SURGE_GATE_LIMIT} new entries/s`
+    ` Surge gate        : limit ${SURGE_GATE_LIMIT} new entries/s`
   );
   console.log(` Session timeout   : ${USER_TIMEOUT_MS / 1_000}s`);
   console.log(` Simulator pool    : ${SIMULATOR_POOL_SIZE} agents`);
