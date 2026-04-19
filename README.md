@@ -130,7 +130,7 @@ If all active slots are occupied, new entrants are denied with `reason = "capaci
 
 The server tracks incoming access attempts in one-second windows. It keeps a rolling baseline over recent seconds and computes a deviation-based threshold:
 
-`threshold = max(3, ceil(mean(last 12 seconds) + 1.5 * stddev + 3))`
+`threshold = max(3, ceil(mean(last 12 seconds) + 1.8 * stddev + 3))`
 
 Where:
 
@@ -150,7 +150,7 @@ While surge mode is active:
 
 Default value:
 
-- `ENTRY_RATE_LIMIT_PER_SECOND = 20`
+- `SURGE_GATE_LIMIT = max(ENTRY_RATE_LIMIT_PER_SECOND, 10)`
 - `SURGE_COOLDOWN_MS = 10000`
 
 If the temporary gate is exhausted during surge mode, the request is denied with `reason = "surge-throttled"`.
@@ -191,13 +191,16 @@ When a request reaches `POST /api/request-access`, the gateway evaluates it in t
 
 1. Update rolling traffic counters.
 2. Check whether the same IP already holds an active session.
-3. If surge mode is active and the current second has already consumed the surge admission allowance, deny with `surge-throttled`.
-4. If concurrent session capacity is already full, deny with `capacity-full`.
-5. Otherwise, create a new session and admit the visitor.
+3. If the source IP is in reputation cooldown, deny with `reputation-blocked`.
+4. If the new-user onboarding gate is active, deny with `onboarding-blocked`.
+5. If surge mode is active and the current second has already consumed the surge admission allowance, deny with `surge-throttled`.
+6. If concurrent session capacity is already full, deny with `capacity-full`.
+7. Otherwise, create a new session and admit the visitor.
 
 This ordering is intentional. It separates two different protective behaviors:
 
-- surge throttling: abnormal rate response
+- onboarding/reputation gating: temporary suppression of risky or unusually spiky new-user traffic
+- surge throttling: abnormal request-rate response
 - capacity denial: concurrent occupancy protection
 
 ## Experimental Model
@@ -251,7 +254,7 @@ These metrics are returned through the status API and displayed in the dashboard
 
 ### Backend
 
-The main backend is [server.js](/home/tamatar/Documents/College/bisek/server.js). It is responsible for:
+The main backend is [server.js](./server.js). It is responsible for:
 
 - static asset serving
 - active session tracking
@@ -266,21 +269,21 @@ The main backend is [server.js](/home/tamatar/Documents/College/bisek/server.js)
 
 The frontend resides in `public/` and includes:
 
-- [public/index.html](/home/tamatar/Documents/College/bisek/public/index.html): visitor gateway page
-- [public/site.html](/home/tamatar/Documents/College/bisek/public/site.html): protected content page
-- [public/blocked.html](/home/tamatar/Documents/College/bisek/public/blocked.html): denial page
-- [public/admin.html](/home/tamatar/Documents/College/bisek/public/admin.html): live dashboard
-- [public/gateway.js](/home/tamatar/Documents/College/bisek/public/gateway.js): visitor-side gateway logic
-- [public/admin.js](/home/tamatar/Documents/College/bisek/public/admin.js): dashboard rendering and control logic
-- [public/style.css](/home/tamatar/Documents/College/bisek/public/style.css): shared visual styling
+- [public/index.html](./public/index.html): visitor gateway page
+- [public/site.html](./public/site.html): protected content page
+- [public/blocked.html](./public/blocked.html): denial page
+- [public/admin.html](./public/admin.html): live dashboard
+- [public/gateway.js](./public/gateway.js): visitor-side gateway logic
+- [public/admin.js](./public/admin.js): dashboard rendering and control logic
+- [public/style.css](./public/style.css): shared visual styling
 
 ### Simulator and Launchers
 
 The bounded simulator and launch scripts are:
 
-- [ddos-test.js](/home/tamatar/Documents/College/bisek/ddos-test.js)
-- [test-it.bat](/home/tamatar/Documents/College/bisek/test-it.bat)
-- [start-server.bat](/home/tamatar/Documents/College/bisek/start-server.bat)
+- [ddos-test.js](./ddos-test.js)
+- [test-it.bat](./test-it.bat)
+- [start-server.bat](./start-server.bat)
 
 Despite the historical filename `ddos-test.js`, the current script is a bounded local pressure controller. It is not a general-purpose attack utility.
 
@@ -293,6 +296,8 @@ Requests entry through the gateway.
 Possible outcomes:
 
 - access allowed with token
+- access denied due to reputation cooldown
+- access denied due to temporary onboarding gate
 - access denied due to full concurrent capacity
 - access denied due to temporary surge throttling
 
@@ -371,9 +376,15 @@ The key default values in the current implementation are:
 - `USER_TIMEOUT_MS = 60000`
 - `ENTRY_RATE_LIMIT_PER_SECOND = 20`
 - `RATE_BASELINE_WINDOW_SECONDS = 12`
-- `SURGE_STDDEV_MULTIPLIER = 1.5`
+- `SURGE_STDDEV_MULTIPLIER = 1.8`
 - `SURGE_MIN_ABSOLUTE_DELTA = 3`
 - `SURGE_COOLDOWN_MS = 10000`
+- `NEW_USER_STDDEV_MULTIPLIER = 2.1`
+- `NEW_USER_MIN_ABSOLUTE_DELTA = 2`
+- `ONBOARDING_BLOCK_WINDOW_MS = 8000`
+- `DYNAMIC_CAPACITY_FACTOR = 0.35`
+- `DYNAMIC_CAPACITY_MAX_MULTIPLIER = 5`
+- `SURGE_GATE_FLOOR = 10`
 - `SIMULATOR_POOL_SIZE = ceil(MAX_USERS * 1.5)`
 - `SIMULATOR_PARALLEL_LIMIT = max(2, ceil(MAX_USERS * 0.75))`
 
@@ -488,18 +499,18 @@ That framing is more defensible than describing the project as a full DDoS defen
 
 | File | Role in the Research Prototype |
 | --- | --- |
-| [server.js](/home/tamatar/Documents/College/bisek/server.js) | Core gateway logic, session store, surge detector, simulator management, telemetry APIs |
-| [ddos-test.js](/home/tamatar/Documents/College/bisek/ddos-test.js) | Console-based bounded pressure controller |
-| [test-it.bat](/home/tamatar/Documents/College/bisek/test-it.bat) | Windows launcher for the simulator |
-| [start-server.bat](/home/tamatar/Documents/College/bisek/start-server.bat) | Windows launcher for the backend |
-| [public/index.html](/home/tamatar/Documents/College/bisek/public/index.html) | Visitor entry page |
-| [public/gateway.js](/home/tamatar/Documents/College/bisek/public/gateway.js) | Visitor-side admission flow |
-| [public/site.html](/home/tamatar/Documents/College/bisek/public/site.html) | Protected page reached after admission |
-| [public/blocked.html](/home/tamatar/Documents/College/bisek/public/blocked.html) | Denial page for capacity or surge cases |
-| [public/admin.html](/home/tamatar/Documents/College/bisek/public/admin.html) | Live monitoring interface |
-| [public/admin.js](/home/tamatar/Documents/College/bisek/public/admin.js) | Dashboard data rendering and control actions |
-| [public/style.css](/home/tamatar/Documents/College/bisek/public/style.css) | Shared styling |
-| [package.json](/home/tamatar/Documents/College/bisek/package.json) | Dependency and script configuration |
+| [server.js](./server.js) | Core gateway logic, session store, surge detector, simulator management, telemetry APIs |
+| [ddos-test.js](./ddos-test.js) | Console-based bounded pressure controller |
+| [test-it.bat](./test-it.bat) | Windows launcher for the simulator |
+| [start-server.bat](./start-server.bat) | Windows launcher for the backend |
+| [public/index.html](./public/index.html) | Visitor entry page |
+| [public/gateway.js](./public/gateway.js) | Visitor-side admission flow |
+| [public/site.html](./public/site.html) | Protected page reached after admission |
+| [public/blocked.html](./public/blocked.html) | Denial page for capacity or surge cases |
+| [public/admin.html](./public/admin.html) | Live monitoring interface |
+| [public/admin.js](./public/admin.js) | Dashboard data rendering and control actions |
+| [public/style.css](./public/style.css) | Shared styling |
+| [package.json](./package.json) | Dependency and script configuration |
 
 ## Conclusion
 
